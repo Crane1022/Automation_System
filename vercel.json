@@ -5,8 +5,8 @@
       "root": "apps/api",
       "framework": "express",
       "installCommand": "cd ../.. && PUPPETEER_SKIP_DOWNLOAD=1 npm ci --include=dev --no-audit --no-fund",
-      "buildCommand": "cd ../.. && npm run build:packages && npm run build -w apps/api",
-      "entrypoint": "index.js"
+      "buildCommand": "cd ../.. && npm run build:packages && npm run build:vercel -w apps/api",
+      "entrypoint": "vercel/index.js"
     },
     "web": {
       "root": "apps/web",
