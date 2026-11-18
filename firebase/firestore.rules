@@ -1,0 +1,49 @@
+rules_version = '2';
+
+// Widebed Automation keeps ALL data access on the server.
+//
+// The web app never reads or writes Firestore directly: it calls the
+// Express API, which verifies the Firebase ID token, checks roles and
+// department permissions, and then uses the Admin SDK (which bypasses
+// these rules). Denying every client request means a leaked web config or a
+// modified browser cannot touch workflows, executions or credentials.
+//
+// If this Firebase project is shared with PMS/TMS, deploy these rules ONLY
+// for the automation collections, merged with the existing rules (see
+// docs/DEPLOYMENT.md). Do not overwrite the other apps' rules.
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /users/{uid} { allow read, write: if false; }
+    match /workflows/{id} { allow read, write: if false; }
+    match /workflowVersions/{id} { allow read, write: if false; }
+    match /workflowExecutions/{id} {
+      allow read, write: if false;
+      match /steps/{stepId} { allow read, write: if false; }
+    }
+    match /workflowFolders/{id} { allow read, write: if false; }
+    match /workflowTemplates/{id} { allow read, write: if false; }
+    match /assistantChats/{id} {
+      allow read, write: if false;
+      match /messages/{messageId} { allow read, write: if false; }
+      match /images/{imageId} { allow read, write: if false; }
+    }
+    match /assistantMemories/{id} { allow read, write: if false; }
+    match /aiAgents/{id} { allow read, write: if false; }
+    match /aiTasks/{id} { allow read, write: if false; }
+    match /aiSchedules/{id} { allow read, write: if false; }
+    match /aiResponsibilities/{id} { allow read, write: if false; }
+    match /aiNotifications/{id} { allow read, write: if false; }
+    match /aiApprovals/{id} { allow read, write: if false; }
+    match /aiProjects/{id} { allow read, write: if false; }
+    match /aiUsage/{id} { allow read, write: if false; }
+    // Company Knowledge: text only, read through the API (which checks who may read what).
+    match /aiKnowledge/{id} {
+      allow read, write: if false;
+      match /knowledgeChunks/{n} { allow read, write: if false; }
+    }
+    match /webhookEndpoints/{id} { allow read, write: if false; }
+    match /credentials/{id} { allow read, write: if false; }
+    match /auditLogs/{id} { allow read, write: if false; }
+    match /systemSettings/{id} { allow read, write: if false; }
+  }
+}

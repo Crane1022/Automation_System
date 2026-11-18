@@ -1,0 +1,21 @@
+node_modules/
+dist/
+*.tsbuildinfo
+.env
+.env.*
+!.env.example
+# Never commit service account keys
+*service-account*.json
+*-firebase-adminsdk-*.json
+secrets/
+coverage/
+.firebase/
+firebase-debug.log
+firestore-debug.log
+e2e/shots/
+
+secret/
+*.env
+.env*
+*client_secret*.json
+*firebase-adminsdk*.json

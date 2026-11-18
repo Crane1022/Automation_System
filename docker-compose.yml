@@ -1,0 +1,97 @@
+# Widebed Automation — production stack.
+#   cp .env.example .env   (fill it in)
+#   docker compose up -d --build
+services:
+  api:
+    build:
+      context: .
+      dockerfile: docker/api.Dockerfile
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      NODE_ENV: production
+      PORT: "4000"
+      TRUST_PROXY: "true"
+      GOOGLE_APPLICATION_CREDENTIALS: /run/secrets/firebase_service_account
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
+      # The API only queues work; the worker containers run it.
+      PROCESS_JOBS: "false"
+    secrets:
+      - firebase_service_account
+    depends_on:
+      - redis
+    expose:
+      - "4000"
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    stop_grace_period: 40s
+
+  web:
+    build:
+      context: .
+      dockerfile: docker/web.Dockerfile
+      args:
+        VITE_FIREBASE_API_KEY: ${VITE_FIREBASE_API_KEY}
+        VITE_FIREBASE_AUTH_DOMAIN: ${VITE_FIREBASE_AUTH_DOMAIN}
+        VITE_FIREBASE_PROJECT_ID: ${VITE_FIREBASE_PROJECT_ID}
+        VITE_FIREBASE_APP_ID: ${VITE_FIREBASE_APP_ID}
+    restart: unless-stopped
+    environment:
+      DOMAIN: ${DOMAIN:-:80}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - api
+
+  # Runs executions, Wait nodes, Code nodes and scheduled triggers.
+  # Scale with:  docker compose up -d --scale worker=3
+  worker:
+    build:
+      context: .
+      dockerfile: docker/api.Dockerfile
+    command: ["node", "apps/api/dist/worker.js"]
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      NODE_ENV: production
+      GOOGLE_APPLICATION_CREDENTIALS: /run/secrets/firebase_service_account
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
+      PROCESS_JOBS: "true"
+    secrets:
+      - firebase_service_account
+    depends_on:
+      - redis
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      disable: true
+    stop_grace_period: 40s
+
+  # Queue, schedules and live events. Not exposed outside the Docker network.
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes", "--requirepass", "${REDIS_PASSWORD}", "--maxmemory-policy", "noeviction"]
+    restart: unless-stopped
+    volumes:
+      - redis_data:/data
+
+secrets:
+  firebase_service_account:
+    # Keep this file outside the repository (it is git-ignored).
+    file: ./secrets/firebase-service-account.json
+
+volumes:
+  redis_data:
+  caddy_data:
+  caddy_config:

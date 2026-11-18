@@ -1,0 +1,918 @@
+{
+  "format": "widebed-automation/workflow",
+  "formatVersion": 1,
+  "exportedAt": "2026-11-18T03:22:31Z",
+  "workflow": {
+    "name": "Tenant Reminder (PMS)",
+    "description": "Every day at 9:00 AM (Malaysia): reads active bookings from the Widebed PMS and sends the guest and owner emails due today (the 10 rules of the old n8n \"Tenant Reminder\"). Marks passcodes, utility bills and owner notices as sent in the PMS.",
+    "tags": [
+      "PMS",
+      "Tenants",
+      "Email"
+    ],
+    "definition": {
+      "schemaVersion": 1,
+      "nodes": [
+        {
+          "id": "trg",
+          "type": "trigger.schedule",
+          "name": "Every day 9:00 AM",
+          "position": {
+            "x": 0,
+            "y": 400
+          },
+          "config": {
+            "mode": "daily",
+            "time": "09:00",
+            "timezone": "Asia/Kuala_Lumpur"
+          }
+        },
+        {
+          "id": "bk",
+          "type": "data.firebaseRead",
+          "name": "Active PMS bookings",
+          "position": {
+            "x": 240,
+            "y": 400
+          },
+          "config": {
+            "mode": "query",
+            "collection": "offlineBookings",
+            "where": [
+              {
+                "field": "status",
+                "op": "==",
+                "value": "active"
+              }
+            ],
+            "orderBy": "",
+            "direction": "asc",
+            "limit": 500
+          },
+          "credentialId": "cred_pms_tenant_emails",
+          "notes": "Every active offline booking (Create booking, direct bookings and Willow imports)."
+        },
+        {
+          "id": "sec",
+          "type": "data.firebaseRead",
+          "name": "Door passcodes",
+          "position": {
+            "x": 480,
+            "y": 400
+          },
+          "config": {
+            "mode": "get",
+            "collection": "offlineBookings",
+            "docId": "{{ $json.id }}/private/main",
+            "saveAs": "secret",
+            "where": [],
+            "orderBy": "",
+            "direction": "asc",
+            "limit": 50
+          },
+          "credentialId": "cred_pms_tenant_emails"
+        },
+        {
+          "id": "ten",
+          "type": "data.firebaseRead",
+          "name": "Tenant name & email",
+          "position": {
+            "x": 720,
+            "y": 400
+          },
+          "config": {
+            "mode": "get",
+            "collection": "tenants",
+            "docId": "{{ $json.tenantId }}/private/main",
+            "saveAs": "tenant",
+            "where": [],
+            "orderBy": "",
+            "direction": "asc",
+            "limit": 50
+          },
+          "credentialId": "cred_pms_tenant_emails"
+        },
+        {
+          "id": "unit",
+          "type": "data.firebaseRead",
+          "name": "Unit",
+          "position": {
+            "x": 960,
+            "y": 400
+          },
+          "config": {
+            "mode": "get",
+            "collection": "units",
+            "docId": "{{ $json.unitId }}",
+            "saveAs": "unit",
+            "where": [],
+            "orderBy": "",
+            "direction": "asc",
+            "limit": 50
+          },
+          "credentialId": "cred_pms_tenant_emails"
+        },
+        {
+          "id": "prop",
+          "type": "data.firebaseRead",
+          "name": "Property",
+          "position": {
+            "x": 1200,
+            "y": 400
+          },
+          "config": {
+            "mode": "get",
+            "collection": "properties",
+            "docId": "{{ $json.propertyId }}",
+            "saveAs": "property",
+            "where": [],
+            "orderBy": "",
+            "direction": "asc",
+            "limit": 50
+          },
+          "credentialId": "cred_pms_tenant_emails"
+        },
+        {
+          "id": "own",
+          "type": "data.firebaseRead",
+          "name": "Owner contact",
+          "position": {
+            "x": 1440,
+            "y": 400
+          },
+          "config": {
+            "mode": "get",
+            "collection": "owners",
+            "docId": "{{ $json.unit.ownerId }}/private/contact",
+            "saveAs": "ownerContact",
+            "where": [],
+            "orderBy": "",
+            "direction": "asc",
+            "limit": 50
+          },
+          "credentialId": "cred_pms_tenant_emails"
+        },
+        {
+          "id": "bill",
+          "type": "data.firebaseRead",
+          "name": "Utility bill",
+          "position": {
+            "x": 1680,
+            "y": 400
+          },
+          "config": {
+            "mode": "get",
+            "collection": "utilityBills",
+            "docId": "{{ $json.id }}",
+            "saveAs": "bill",
+            "where": [],
+            "orderBy": "",
+            "direction": "asc",
+            "limit": 50
+          },
+          "credentialId": "cred_pms_tenant_emails"
+        },
+        {
+          "id": "code",
+          "type": "data.code",
+          "name": "Work out today's emails",
+          "position": {
+            "x": 1920,
+            "y": 400
+          },
+          "config": {
+            "code": "// Works out, for every PMS booking, which emails are due TODAY (Malaysia time).\n// Input: one item per booking from offlineBookings, with the lookups added before this step:\n//   secret (booking private/main: door passcodes; guest details on imported bookings),\n//   tenant (tenant private/main: name, email, phone), unit, property, ownerContact, bill (utility bill).\n// Output: the same items with ready-to-use fields (guestName, checkInDisplay…) and one true/false flag per rule.\n\nconst MS_DAY = 24 * 60 * 60 * 1000;\nconst MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];\n\n// Today in Malaysia (UTC+8), as a whole day\nconst todayIso = new Date(Date.now() + 8 * 60 * 60 * 1000).toISOString().slice(0, 10);\nconst dayNum = (iso) => Math.round(Date.parse(iso + 'T00:00:00Z') / MS_DAY);\nconst today = dayNum(todayIso);\n\n// \"2026-08-17\", \"17/08/2026\", a timestamp… → \"2026-08-17\" (or '' if it isn't a date)\nfunction toIso(v) {\n  if (!v) return '';\n  const s = String(v).trim();\n  let m = s.match(/^(\\d{4})-(\\d{2})-(\\d{2})/);\n  if (m) return `${m[1]}-${m[2]}-${m[3]}`;\n  m = s.match(/^(\\d{1,2})\\/(\\d{1,2})\\/(\\d{4})$/);\n  if (m) return `${m[3]}-${m[2].padStart(2, '0')}-${m[1].padStart(2, '0')}`;\n  const t = Date.parse(s);\n  return Number.isNaN(t) ? '' : new Date(t + 8 * 60 * 60 * 1000).toISOString().slice(0, 10);\n}\nfunction display(iso) {\n  if (!iso) return '';\n  const [y, mo, d] = iso.split('-').map(Number);\n  return `${String(d).padStart(2, '0')} ${MONTHS[mo - 1]} ${y}`;\n}\nfunction addDays(iso, n) {\n  return new Date(Date.parse(iso + 'T00:00:00Z') + n * MS_DAY).toISOString().slice(0, 10);\n}\nconst money = (v) => (Number(v) || 0).toLocaleString('en-MY', { minimumFractionDigits: 2, maximumFractionDigits: 2 });\nconst text = (v) => (v === null || v === undefined ? '' : String(v).trim());\nconst isEmail = (s) => /^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(text(s));\nconst norm = (v) => text(v).toLowerCase().replace(/\\s+/g, '').replace(/-/g, '_');\n// First non-empty value among several possible field names\nfunction pick(objs, keys) {\n  for (const o of objs) {\n    if (!o || typeof o !== 'object') continue;\n    for (const k of keys) if (text(o[k])) return text(o[k]);\n  }\n  return '';\n}\nfunction emailsFrom(v) {\n  if (!v) return [];\n  if (Array.isArray(v)) return v.flatMap(emailsFrom);\n  if (typeof v === 'object') return emailsFrom(v.email || v.Email || '');\n  return String(v).split(/[\\s,;]+/).filter(isEmail);\n}\n\n// Long-term tenants: the next monthly due date (same day of the month as the check-in), today or later\nfunction nextMonthly(arrivalIso, departureIso) {\n  if (!arrivalIso) return '';\n  const [ay, am, ad] = arrivalIso.split('-').map(Number);\n  const [ty, tm] = todayIso.split('-').map(Number);\n  for (let k = 0; k < 3; k++) {\n    let y = ty, m = tm + k;\n    while (m > 12) { m -= 12; y += 1; }\n    const last = new Date(Date.UTC(y, m, 0)).getUTCDate();\n    const iso = `${y}-${String(m).padStart(2, '0')}-${String(Math.min(ad, last)).padStart(2, '0')}`;\n    if (iso > arrivalIso && iso >= todayIso && (!departureIso || iso < departureIso)) return iso;\n  }\n  return '';\n}\n\nreturn items.map((b) => {\n  const secret = b.secret || {}, tenant = b.tenant || {}, unit = b.unit || {}, property = b.property || {};\n  const unitInfo = unit.info || {}, propInfo = property.info || {}, bill = b.bill || null;\n\n  // --- Who and where\n  const guestName = pick([tenant, secret], ['name', 'fullName']) || 'Guest';\n  const guestEmail = pick([tenant, secret], ['email']);\n  const propertyName = text(b.propertyName) || text(property.name);\n  const unitNumber = text(b.unitCode) || text(unit.unitCode);\n\n  // --- Dates\n  const checkIn = toIso(b.arrival), checkOut = toIso(b.departure);\n  const daysUntilCheckIn = checkIn ? dayNum(checkIn) - today : 999999;\n  const daysUntilCheckOut = checkOut ? dayNum(checkOut) - today : 999999;\n  const isTenantActive = !!checkIn && !!checkOut && daysUntilCheckIn <= 0 && daysUntilCheckOut > 0;\n  const stayingDays = checkIn && checkOut ? Math.abs(dayNum(checkOut) - dayNum(checkIn)) + 1 : 0;\n\n  // --- Door passcodes (booking private part)\n  const mainDoorPasscode = text(secret.mainDoorPasscode);\n  const currentExpiry = toIso(secret.currentExpiryDate);\n  const nextDoorPasscode = text(secret.nextDoorPasscode);\n  const nextExpiry = toIso(secret.nextExpiryDate);\n  const daysUntilPassExpiry = currentExpiry ? dayNum(currentExpiry) - today : 999999;\n\n  // --- Rent\n  const renewalDate = toIso(b.renewalDate) || (b.longTerm ? nextMonthly(checkIn, checkOut) : '');\n  const daysUntilRenewal = renewalDate ? dayNum(renewalDate) - today : null;\n  const rent = Number(b.monthlyRent) || Number(b.rental) || Number(b.amount) || 0;\n\n  // --- Optional unit details (shown in emails only when filled in the PMS)\n  const gmapLink = pick([b, unitInfo, propInfo, property], ['gmapLink', 'mapLink', 'googleMapsLink']);\n  const wifiName = pick([secret, b, unitInfo], ['wifiName', 'wifiUsername', 'wifiSsid']);\n  const wifiPassword = pick([secret, b, unitInfo], ['wifiPassword', 'wifiPasscode']);\n  const mailboxPasscode = pick([secret, b, unitInfo], ['mailboxPasscode', 'mailboxCode']);\n  const parkingLot = pick([b, unitInfo], ['parkingLot', 'parkingLotNumber', 'carParkNo', 'carParks']);\n  const whatsappGroupLink = pick([b, unitInfo], ['whatsappGroupLink']);\n  const line = (label, v) => (v ? `<strong>${label}:</strong> ${v}<br>` : '');\n  const extrasHtml = line('Mailbox Passcode', mailboxPasscode) + line('WiFi Network', wifiName) + line('WiFi Password', wifiPassword) + line('Parking Lot', parkingLot);\n  const locationHtml = line('Property Location', gmapLink);\n  const whatsappHtml = whatsappGroupLink ? `<strong>WhatsApp group for any inquiries:</strong> ${whatsappGroupLink}<br>` : '';\n\n  // --- Owner emails: the booking's own Owner Email (imported bookings) wins, else the unit owner's contact\n  const fromBooking = emailsFrom(b.ownerEmail);\n  const fromOwner = [...emailsFrom(b.ownerContact && b.ownerContact.email), ...emailsFrom(b.ownerContact && b.ownerContact.coOwners)];\n  const ownerEmails = [...new Set(fromBooking.length ? fromBooking : fromOwner)].join(', ');\n\n  // --- Statuses\n  const rentalStatus = text(b.rentalStatus) || 'Paid';\n  const passwordStatus = norm(b.passwordStatus);\n  const moveInStatus = norm(b.moveInStatus), moveOutStatus = norm(b.moveOutStatus);\n  const utilityStatus = bill ? norm(bill.utilityStatus) : '';\n  const canEmailGuest = isEmail(guestEmail);\n\n  const flags = {\n    isPriorCheckIn: canEmailGuest && daysUntilCheckIn === 1,                                         // Rule 1\n    isCheckInDay: canEmailGuest && daysUntilCheckIn === 0,                                           // Rule 2\n    isExtensionReminder: canEmailGuest && daysUntilCheckOut === 7,                                    // Rule 3\n    isPaymentReminder: canEmailGuest && daysUntilRenewal !== null && [7, 3, 1].includes(daysUntilRenewal)\n      && rentalStatus === 'Unpaid' && isTenantActive && rent > 0,                                    // Rule 4\n    // The next passcode being filled in is the \"ready\" signal (the PMS has no separate button for it).\n    // Password Status \"Hold\" stops it for a booking.\n    isTenantPassUpdate: canEmailGuest && daysUntilPassExpiry <= 1 && passwordStatus !== 'hold'\n      && isTenantActive && !!nextDoorPasscode && !!nextExpiry,                                        // Rule 5\n    isCheckoutReminder: canEmailGuest && daysUntilCheckOut === 0,                                     // Rule 6\n    isThankYou: canEmailGuest && daysUntilCheckOut === -1,                                            // Rule 7\n    isUtilityBill: canEmailGuest && utilityStatus === 'ready_to_send' && isTenantActive,             // Rule 8\n    isOwnerMoveInNotify: moveInStatus === 'ready_to_send' && !!checkIn && daysUntilCheckIn <= 0 && !!ownerEmails,     // Rule 9\n    isOwnerMoveOutNotify: moveOutStatus === 'ready_to_send' && !!checkOut && daysUntilCheckOut <= 0 && !!ownerEmails, // Rule 10\n  };\n\n  return {\n    id: b.id,\n    bookingNo: text(b.bookingNo),\n    guestName, guestEmail, propertyName, unitNumber,\n    checkIn, checkOut, checkInDisplay: display(checkIn), checkOutDisplay: display(checkOut),\n    stayingDays, stayingDaysLabel: `${stayingDays} Days`,\n    mainDoorPasscode, nextDoorPasscode,\n    currentExpiryDisplay: display(currentExpiry),\n    activeFromDisplay: currentExpiry ? display(addDays(currentExpiry, 1)) : '',\n    nextExpiryDisplay: display(nextExpiry),\n    renewalDisplay: display(renewalDate), rentalAmount: money(rent),\n    extrasHtml, locationHtml, whatsappHtml,\n    electricity: bill ? money(bill.electricity) : '', water: bill ? money(bill.water) : '', sewerage: bill ? money(bill.sewerage) : '',\n    utilityTotal: bill ? money(bill.total || (Number(bill.electricity) || 0) + (Number(bill.water) || 0) + (Number(bill.sewerage) || 0)) : '',\n    billPeriod: bill && (bill.periodFrom || bill.periodTo) ? `${display(toIso(bill.periodFrom))} – ${display(toIso(bill.periodTo))}` : '',\n    invoiceLink: bill ? text(bill.invoiceLink) : '',\n    ownerEmails,\n    // Written to the PMS after the new-passcode email is sent (Rule 5)\n    rotatePrivate: { mainDoorPasscode: nextDoorPasscode, currentExpiryDate: nextExpiry, nextDoorPasscode: '', nextExpiryDate: '' },\n    ...flags,\n    _check: { today: todayIso, daysUntilCheckIn, daysUntilCheckOut, daysUntilPassExpiry, daysUntilRenewal, isTenantActive, rentalStatus, passwordStatus, moveInStatus, moveOutStatus, utilityStatus, hasGuestEmail: canEmailGuest },\n  };\n});\n",
+            "timeoutMs": 10000
+          },
+          "notes": "Same rules as the n8n \"Tenant Reminder\" (Rules 1–10), using PMS fields. Dates are Malaysia time."
+        },
+        {
+          "id": "f_r1",
+          "type": "logic.filter",
+          "name": "Rule 1: Day before check-in",
+          "position": {
+            "x": 2200,
+            "y": -560
+          },
+          "config": {
+            "conditions": [
+              {
+                "left": "{{ $json.isPriorCheckIn }}",
+                "operator": "isTrue",
+                "right": ""
+              }
+            ],
+            "combine": "and"
+          }
+        },
+        {
+          "id": "g_r1",
+          "type": "comm.gmailSend",
+          "name": "Email: Check-in tomorrow",
+          "position": {
+            "x": 2480,
+            "y": -560
+          },
+          "config": {
+            "to": "{{ $json.guestEmail }}",
+            "cc": "operation@widebed.com, customerservice@widebed.com, admin@widebed.com",
+            "bcc": "",
+            "subject": "NO-REPLY. Check-in Reminder: Your stay at {{ $json.propertyName }} starts tomorrow!",
+            "format": "html",
+            "body": "<p>Hi {{ $json.guestName }},</p>\n\n<p>We are excited to welcome you tomorrow! Here are your check-in details and some important reminders to ensure a smooth arrival.</p>\n\n<h3>📍 Property Details</h3>\n<p>\n{{ $json.locationHtml }}<strong>Property Name:</strong> {{ $json.propertyName }}<br>\n<strong>Unit Number:</strong> {{ $json.unitNumber }}<br>\n<strong>Check-in:</strong> {{ $json.checkInDisplay }}\n</p>\n\n<h3>🔑 Access & Connectivity</h3>\n<p>\n<strong>Door Passcode:</strong> {{ $json.mainDoorPasscode }} <em>(Note: This code will be activated tomorrow at check-in time)</em><br>\n<strong>Note:</strong> The <strong>#</strong> key is the <strong>UNLOCKING</strong> key on the keypad. <br>\n(Depending on your lock model, it may be <strong>#</strong>, <strong>*</strong>, or a <strong>Key Icon</strong>). Please press it after entering the numbers.<br><br>\n{{ $json.extrasHtml }}<br>\n{{ $json.whatsappHtml }}<strong>Important WhatsApp Contacts:</strong><br>\n<strong>📌 Operations: </strong>Nicholas (+6012 822 3141)<br>\n<strong>📌 Accounts & Payment: </strong>Athira (+6012 550 3141)<br>\n</p>\n\n<p style=\"font-style: italic;\">This is an auto-generated email. For any inquiry, please direct them to our Whatsapp group.</p>\n\n<p>Best regards,<br>\n<strong>Widebed Property Rental Management Team</strong><br>\n<strong>\"Happy Home Away from Home\"</strong></p>",
+            "replyTo": "",
+            "fromName": "Widebed",
+            "keepItem": false
+          },
+          "credentialId": "cred_gmail_widebed"
+        },
+        {
+          "id": "f_r2",
+          "type": "logic.filter",
+          "name": "Rule 2: Check-in day",
+          "position": {
+            "x": 2200,
+            "y": -320
+          },
+          "config": {
+            "conditions": [
+              {
+                "left": "{{ $json.isCheckInDay }}",
+                "operator": "isTrue",
+                "right": ""
+              }
+            ],
+            "combine": "and"
+          }
+        },
+        {
+          "id": "g_r2",
+          "type": "comm.gmailSend",
+          "name": "Email: Welcome (check-in day)",
+          "position": {
+            "x": 2480,
+            "y": -320
+          },
+          "config": {
+            "to": "{{ $json.guestEmail }}",
+            "cc": "operation@widebed.com, customerservice@widebed.com, admin@widebed.com",
+            "bcc": "",
+            "subject": "NO-REPLY. Welcome to {{ $json.propertyName }}! Your access details are inside.",
+            "format": "html",
+            "body": "<p>Hi {{ $json.guestName }},</p>\n\n<p><strong>Welcome to your new home!</strong> We hope you had a smooth journey.</p>\n\n<p>Your door passcode is now <strong>ACTIVE</strong>. Here is your \"Quick Access\" cheat sheet so you don't have to dig through old emails:</p>\n\n<div style=\"background-color: #f0f0f0; padding: 15px; border-radius: 5px; border-left: 5px solid #30d5d7;\">\n<h3>🔑 Quick Access Details</h3>\n<p>\n<strong>Unit:</strong> {{ $json.unitNumber }}<br>\n<strong>Door Passcode:</strong> {{ $json.mainDoorPasscode }}<br>\n<strong>Note:</strong> The <strong>#</strong> key is the <strong>UNLOCKING</strong> key on the keypad. <br>\n(Depending on your lock model, it may be <strong>#</strong>, <strong>*</strong>, or a <strong>Key Icon</strong>). Please press it after entering the numbers.<br><br>\n{{ $json.extrasHtml }}\n</p>\n</div>\n<br>\n<p>{{ $json.whatsappHtml }}<strong>Important WhatsApp Contacts:</strong><br>\n<strong>📌 Operations: </strong>Nicholas (+6012 822 3141)<br>\n<strong>📌 Accounts & Payment: </strong>Athira (+6012 550 3141)<br></p>\n\n<hr>\n\n<h3>🔔 Important Reminders</h3>\n\n<p><strong>✅ Move-in & Move-out Procedures:</strong></p>\n<ul>\n<li>Contact our team for lift/parking card collection & return during move-out.</li>\n<li>Please do not leave lift/parking cards or keys inside the unit. A <strong>RM100 penalty</strong> will apply if our team needs to unlock the door.</li>\n</ul>\n\n<p><strong>✅ Building Rules & Etiquette:</strong></p>\n<ul>\n<li>Do not leave trash in the common areas (e.g., corridors, lobby).</li>\n<li>Avoid excessive noise in the evenings. Any penalties imposed by the building management due to non-compliance will be borne by the tenant.</li>\n</ul>\n\n<p><strong>✅ Communication & Support:</strong></p>\n<ul>\n<li>Expect delayed responses after working hours (9 AM – 6 PM, Monday to Friday).</li>\n<li>Kindly use this group chat for all inquiries instead of private messaging.</li>\n</ul>\n\n<hr>\n\n<h3>🏡 Take Good Care of the Property</h3>\n<p>As the appointed property manager on behalf of the owner, our team will conduct regular inspections to ensure the property is well-maintained. We kindly ask you to:</p>\n<ul>\n<li>🏡 Treat the property as you would your own home.</li>\n<li>🧹 Keep the unit clean and tidy.</li>\n<li>🛠 Fix minor issues promptly.</li>\n<li>💡 Settle utility bills on time.</li>\n<li>💰 Ensure rental payments are made before the new month starts.</li>\n</ul>\n<p><em>🔸 Any damages or additional cleaning required due to negligence will be deducted from the security deposit.</em></p>\n\n<br>\n<p>Thank you for your cooperation! 😊</p>\n<p style=\"font-style: italic;\">This is an auto-generated email. For any inquiry, please direct them to our Whatsapp group.</p>\n\n<p>Best regards,<br>\n<strong>Widebed Property Rental Management Team</strong><br>\n<strong>\"Happy Home Away from Home\"</strong></p>",
+            "replyTo": "",
+            "fromName": "Widebed",
+            "keepItem": false
+          },
+          "credentialId": "cred_gmail_widebed"
+        },
+        {
+          "id": "f_r3",
+          "type": "logic.filter",
+          "name": "Rule 3: 7 days before check-out",
+          "position": {
+            "x": 2200,
+            "y": -80
+          },
+          "config": {
+            "conditions": [
+              {
+                "left": "{{ $json.isExtensionReminder }}",
+                "operator": "isTrue",
+                "right": ""
+              }
+            ],
+            "combine": "and"
+          }
+        },
+        {
+          "id": "g_r3",
+          "type": "comm.gmailSend",
+          "name": "Email: Extend your stay?",
+          "position": {
+            "x": 2480,
+            "y": -80
+          },
+          "config": {
+            "to": "{{ $json.guestEmail }}",
+            "cc": "operation@widebed.com, customerservice@widebed.com",
+            "bcc": "",
+            "subject": "NO-REPLY. Would you like to extend your stay at {{ $json.propertyName }}?",
+            "format": "html",
+            "body": "<p>Hi {{ $json.guestName }},</p>\n\n<p>We hope you are enjoying your stay at <strong>{{ $json.propertyName }}</strong>!</p>\n\n<p>This is a gentle reminder that your current booking is scheduled to end in 7 days on <strong>{{ $json.checkOutDisplay }}</strong>.</p>\n\n<h3>⏳ Wishing to stay longer?</h3>\n<p>If you would like to extend your tenancy, please let us know as soon as possible so we can block the dates for you before they are opened to other guests.</p>\n\n<p><strong>👉 How to extend:</strong></p>\n<ul>\n<li>Reply in our <strong>WhatsApp Group</strong></li>\n<li>Or contact our Person In Charge directly: </li>\n<li><strong>📌 Operations: </strong>Nicholas (+6012 822 3141)</li>\n<li><strong>📌 Accounts & Payment: </strong>Athira (+6012 550 3141)</li>\n</ul>\n\n<p>If you are planning to check out as scheduled, no action is needed. We will send you checkout instructions closer to the date.</p>\n<p style=\"font-style: italic;\">This is an auto-generated email. For any inquiry, please direct them to our Whatsapp group.</p>\n\n<p>Best regards,<br>\n<strong>Widebed Property Rental Management Team</strong><br>\n<strong>\"Happy Home Away from Home\"</strong></p>",
+            "replyTo": "",
+            "fromName": "Widebed",
+            "keepItem": false
+          },
+          "credentialId": "cred_gmail_widebed"
+        },
+        {
+          "id": "f_r4",
+          "type": "logic.filter",
+          "name": "Rule 4: Rent due in 7, 3 or 1 days (unpaid)",
+          "position": {
+            "x": 2200,
+            "y": 160
+          },
+          "config": {
+            "conditions": [
+              {
+                "left": "{{ $json.isPaymentReminder }}",
+                "operator": "isTrue",
+                "right": ""
+              }
+            ],
+            "combine": "and"
+          }
+        },
+        {
+          "id": "g_r4",
+          "type": "comm.gmailSend",
+          "name": "Email: Rent payment reminder",
+          "position": {
+            "x": 2480,
+            "y": 160
+          },
+          "config": {
+            "to": "{{ $json.guestEmail }}",
+            "cc": "operation@widebed.com, customerservice@widebed.com",
+            "bcc": "",
+            "subject": "NO-REPLY. Payment Reminder: Rent Due for {{ $json.propertyName }}, {{ $json.unitNumber }}",
+            "format": "html",
+            "body": "<p>Hi {{ $json.guestName }},</p>\n\n<p>This is a friendly reminder that your rental payment for the upcoming month is due on <strong>{{ $json.renewalDisplay }}</strong>.</p>\n\n<div style=\"background-color: #f9f9f9; padding: 15px; border-radius: 5px; border: 1px solid #ddd;\">\n<h3>💰 Payment Details</h3>\n<p>\n<strong>Amount Due:</strong> RM {{ $json.rentalAmount }}<br>\n<strong>Due Date:</strong> {{ $json.renewalDisplay }}\n</p>\n\n<hr style=\"border-top: 1px dashed #bbb;\">\n\n<h3>🏦 Bank Account Info</h3>\n<p>\n<strong>Bank:</strong> Malayan Banking Berhad (Maybank)<br>\n<strong>Account Name:</strong> 1 World Short Stay Sdn. Bhd.<br>\n<strong>Account No.:</strong> 514422433606<br>\n<strong>SWIFT/IBAN:</strong> MBBEMYKLXXX\n</p>\n</div>\n\n<h3>✅ Next Steps</h3>\n<p>Once you have made the transfer, please share the <strong>payment receipt/screenshot</strong> in our WhatsApp group so we can issue your official receipt.</p>\n\n<p>If you have already made the payment, please disregard this automated message.</p>\n\n<p>Thank you! 😊</p>\n<p style=\"font-style: italic;\">This is an auto-generated email. For any inquiry, please direct them to our Whatsapp group.</p>\n\n<p>Best regards,<br>\n<strong>Widebed Property Rental Management Team</strong><br>\n<strong>\"Happy Home Away from Home\"</strong></p>",
+            "replyTo": "",
+            "fromName": "Widebed",
+            "keepItem": false
+          },
+          "credentialId": "cred_gmail_widebed"
+        },
+        {
+          "id": "f_r5",
+          "type": "logic.filter",
+          "name": "Rule 5: Door passcode expires (new code ready)",
+          "position": {
+            "x": 2200,
+            "y": 400
+          },
+          "config": {
+            "conditions": [
+              {
+                "left": "{{ $json.isTenantPassUpdate }}",
+                "operator": "isTrue",
+                "right": ""
+              }
+            ],
+            "combine": "and"
+          }
+        },
+        {
+          "id": "g_r5",
+          "type": "comm.gmailSend",
+          "name": "Email: New door passcode",
+          "position": {
+            "x": 2480,
+            "y": 400
+          },
+          "config": {
+            "to": "{{ $json.guestEmail }}",
+            "cc": "operation@widebed.com, customerservice@widebed.com",
+            "bcc": "",
+            "subject": "NO-REPLY. New Door Passcode: Your new door code for {{ $json.unitNumber }}",
+            "format": "html",
+            "body": "<p>Hi {{ $json.guestName }},</p>\n\n<p>Your current door passcode is scheduled to expire on <strong>{{ $json.currentExpiryDisplay }}</strong>.</p>\n\n<p>Here is your <strong>NEW</strong> passcode details:</p>\n\n<div style=\"border: 1px solid #28a745; background-color: #e6fffa; padding: 20px; text-align: center; border-radius: 8px;\">\n<h2 style=\"color: #28a745; margin: 0;\">{{ $json.nextDoorPasscode }}</h2>\n<p style=\"margin-top: 10px; color: #000; font-size: 16px;\">\n<strong>Active Period:</strong> {{ $json.activeFromDisplay }} until {{ $json.nextExpiryDisplay }}.\n</p>\n<strong>Note:</strong> The <strong>#</strong> key is the <strong>UNLOCKING</strong> key on the keypad. <br>\n(Depending on your lock model, it may be <strong>#</strong>, <strong>*</strong>, or a <strong>Key Icon</strong>). Please press it after entering the numbers.\n</div>\n\n<br>\n\n<div style=\"background-color: #fff3cd; border-left: 6px solid #ffc107; padding: 15px;\">\n<h3 style=\"margin-top: 0; color: #856404;\">⚠️ CRITICAL: 24-Hour Activation Rule</h3>\n<p style=\"margin-bottom: 0; color: #856404;\">\nTo ensure this passcode remains active, you <strong>MUST use it at least once within 24 hours</strong> of the \"Active From\" date shown above.\n<br><br>\n<strong>If you do not use this code within the first 24 hours, the security system will automatically disable it</strong>, and you will be locked out.\n</p>\n</div>\n\n<p>Thank you! 😊</p>\n<p style=\"font-style: italic;\">This is an auto-generated email. For any inquiry, please direct them to our Whatsapp group.</p>\n\n<p>Best regards,<br>\n<strong>Widebed Property Rental Management Team</strong><br>\n<strong>\"Happy Home Away from Home\"</strong></p>",
+            "replyTo": "",
+            "fromName": "Widebed",
+            "keepItem": true
+          },
+          "credentialId": "cred_gmail_widebed"
+        },
+        {
+          "id": "u_r5a",
+          "type": "data.firebaseUpdate",
+          "name": "PMS: new passcode becomes current",
+          "position": {
+            "x": 2760,
+            "y": 340
+          },
+          "config": {
+            "collection": "offlineBookings",
+            "docId": "{{ $json.id }}/private/main",
+            "data": "{{ $json.rotatePrivate }}",
+            "mode": "fail"
+          },
+          "credentialId": "cred_pms_tenant_emails"
+        },
+        {
+          "id": "u_r5b",
+          "type": "data.firebaseUpdate",
+          "name": "PMS: Password Status = Active",
+          "position": {
+            "x": 2760,
+            "y": 460
+          },
+          "config": {
+            "collection": "offlineBookings",
+            "docId": "{{ $json.id }}",
+            "data": "{\n  \"passwordStatus\": \"Active\"\n}",
+            "mode": "fail"
+          },
+          "credentialId": "cred_pms_tenant_emails"
+        },
+        {
+          "id": "f_r6",
+          "type": "logic.filter",
+          "name": "Rule 6: Check-out day",
+          "position": {
+            "x": 2200,
+            "y": 640
+          },
+          "config": {
+            "conditions": [
+              {
+                "left": "{{ $json.isCheckoutReminder }}",
+                "operator": "isTrue",
+                "right": ""
+              }
+            ],
+            "combine": "and"
+          }
+        },
+        {
+          "id": "g_r6",
+          "type": "comm.gmailSend",
+          "name": "Email: Check-out today",
+          "position": {
+            "x": 2480,
+            "y": 640
+          },
+          "config": {
+            "to": "{{ $json.guestEmail }}",
+            "cc": "operation@widebed.com, customerservice@widebed.com, admin@widebed.com",
+            "bcc": "",
+            "subject": "NO-REPLY. Checkout Reminder: Instructions for your departure today",
+            "format": "html",
+            "body": "<p>Hi {{ $json.guestName }},</p>\n\n<p>This is a gentle reminder that your tenancy for <strong>{{ $json.propertyName }} ({{ $json.unitNumber }})</strong> ends today, <strong>{{ $json.checkOutDisplay }}</strong>.</p>\n\n<p>To ensure a smooth checkout process and the full refund of your deposit (if applicable), please follow the steps below:</p>\n\n<div style=\"background-color: #f9f9f9; padding: 15px; border-radius: 5px; border: 1px solid #ddd;\">\n<h3>✅ Step 1: Before You Leave</h3>\n<ul>\n<li><strong>Switch Off:</strong> Please turn off all lights, air conditioning, and electrical appliances.</li>\n<li><strong>Clear Up:</strong> Ensure the unit is tidy and no personal items are left behind.</li>\n<li><strong>Check:</strong> Verify that nothing is missing or broken inside the unit.</li>\n</ul>\n\n<hr style=\"border-top: 1px dashed #bbb;\">\n\n<h3>🔑 Step 2: Key & Card Return</h3>\n<p><strong>Option A: Standard Checkout (No Parking Card)</strong><br>\nPlease leave all access cards and keys <strong>inside the room</strong> on the table.</p>\n\n<p><strong>Option B: If you have a Parking Card</strong><br>\nPlease leave ALL access cards (including the parking card) inside the <strong>Mailbox</strong> located at the Lobby.</p>\n\n<hr style=\"border-top: 1px dashed #bbb;\">\n\n<h3>📸 Step 3: Confirmation</h3>\n<p>Once you have left the keys/cards, please <strong>snap a photo</strong> and send it to our WhatsApp Group as proof of checkout.</p>\n</div>\n\n<h3>🏃‍♂️ Exiting the Building</h3>\n<p>Don't worry about getting stuck—going to the lobby/exiting the building does <strong>not</strong> require an access card.</p>\n\n<p>Thank you for staying with us! We hope you had a wonderful time. 😊</p>\n<p style=\"font-style: italic;\">This is an auto-generated email. For any inquiry, please direct them to our Whatsapp group.</p>\n\n<p>Best regards,<br>\n<strong>Widebed Property Rental Management Team</strong><br>\n<strong>\"Happy Home Away from Home\"</strong></p>",
+            "replyTo": "",
+            "fromName": "Widebed",
+            "keepItem": false
+          },
+          "credentialId": "cred_gmail_widebed"
+        },
+        {
+          "id": "f_r7",
+          "type": "logic.filter",
+          "name": "Rule 7: Day after check-out",
+          "position": {
+            "x": 2200,
+            "y": 880
+          },
+          "config": {
+            "conditions": [
+              {
+                "left": "{{ $json.isThankYou }}",
+                "operator": "isTrue",
+                "right": ""
+              }
+            ],
+            "combine": "and"
+          }
+        },
+        {
+          "id": "g_r7",
+          "type": "comm.gmailSend",
+          "name": "Email: Thank you",
+          "position": {
+            "x": 2480,
+            "y": 880
+          },
+          "config": {
+            "to": "{{ $json.guestEmail }}",
+            "cc": "operation@widebed.com, customerservice@widebed.com",
+            "bcc": "",
+            "subject": "NO-REPLY. Thank You For Staying With Us",
+            "format": "html",
+            "body": "<p>Hi {{ $json.guestName }},</p>\n\n<p>Thank you again for choosing <strong>{{ $json.propertyName }}</strong>! We hope you had a comfortable stay and a safe journey to your next destination.</p>\n\n<p>We truly appreciate you taking care of the unit during your time with us.</p>\n\n<div style=\"background-color: #f0f8ff; padding: 15px; border-radius: 5px; border-left: 5px solid #30d5d7;\">\n<h3>💸 Security Deposit Update</h3>\n<p style=\"margin-bottom: 0;\">\nOur team is currently finalizing the checkout inspection. If everything is in order, your security deposit refund will be processed within <strong>7-14 working days</strong>.<br>\n<br>\n<em>(If you booked via a platform like Airbnb/Agoda, the refund timeline will follow their specific policies).</em>\n</p>\n</div>\n\n<p>Thank you for staying with us! We hope you had a wonderful time. 😊</p>\n<p style=\"font-style: italic;\">This is an auto-generated email. For any inquiry, please direct them to our Whatsapp group.</p>\n\n<p>Best regards,<br>\n<strong>Widebed Property Rental Management Team</strong><br>\n<strong>\"Happy Home Away from Home\"</strong></p>",
+            "replyTo": "",
+            "fromName": "Widebed",
+            "keepItem": false
+          },
+          "credentialId": "cred_gmail_widebed"
+        },
+        {
+          "id": "f_r8",
+          "type": "logic.filter",
+          "name": "Rule 8: Utility bill ready to send",
+          "position": {
+            "x": 2200,
+            "y": 1120
+          },
+          "config": {
+            "conditions": [
+              {
+                "left": "{{ $json.isUtilityBill }}",
+                "operator": "isTrue",
+                "right": ""
+              }
+            ],
+            "combine": "and"
+          }
+        },
+        {
+          "id": "g_r8",
+          "type": "comm.gmailSend",
+          "name": "Email: Utility bill",
+          "position": {
+            "x": 2480,
+            "y": 1120
+          },
+          "config": {
+            "to": "{{ $json.guestEmail }}",
+            "cc": "operation@widebed.com, customerservice@widebed.com",
+            "bcc": "",
+            "subject": "NO-REPLY. Utility Bills Invoices for {{ $json.unitNumber }}",
+            "format": "html",
+            "body": "<p>Hi {{ $json.guestName }},</p>\n\n<p>Here is the utility breakdown ({{ $json.billPeriod }}):</p>\n\n<p>\n⚡ <strong>Electricity:</strong> RM {{ $json.electricity }}<br>\n💧 <strong>Water:</strong> RM {{ $json.water }}<br>\n🚽 <strong>Sewerage:</strong> RM {{ $json.sewerage }}\n</p>\n\n<p style=\"font-size: 16px;\">\n💰 <strong>Total Amount: RM {{ $json.utilityTotal }}</strong>\n</p>\n<p>Utility Bill Invoices softcopy: {{ $json.invoiceLink }}</p>\n\n<hr style=\"border: 0; border-top: 1px solid #eee;\">\n\n<p>Please make the transfer to:</p>\n\n<p>\n<strong>Bank:</strong> Malayan Banking Berhad (Maybank)<br>\n<strong>Account Name:</strong> 1 World Short Stay Sdn. Bhd.<br>\n<strong>Account No.:</strong> 514422433606<br>\n</p>\n\n<p>Once the payment has been made, please share your transaction slip with us through our Whatsapp group. Thank you.</p>\n\n<p style=\"font-style: italic;\">This is an auto-generated email. For any inquiry, please direct them to our Whatsapp group.</p>\n\n<p>Best regards,<br>\n<strong>Widebed Property Rental Management Team</strong><br>\n<strong>\"Happy Home Away from Home\"</strong></p>",
+            "replyTo": "",
+            "fromName": "Widebed",
+            "keepItem": true
+          },
+          "credentialId": "cred_gmail_widebed"
+        },
+        {
+          "id": "u_r8",
+          "type": "data.firebaseUpdate",
+          "name": "PMS: Utility Status = Sent",
+          "position": {
+            "x": 2760,
+            "y": 1120
+          },
+          "config": {
+            "collection": "utilityBills",
+            "docId": "{{ $json.id }}",
+            "data": "{\n  \"utilityStatus\": \"Sent\"\n}",
+            "mode": "fail"
+          },
+          "credentialId": "cred_pms_tenant_emails"
+        },
+        {
+          "id": "f_r9",
+          "type": "logic.filter",
+          "name": "Rule 9: Owner — tenant moved in",
+          "position": {
+            "x": 2200,
+            "y": 1360
+          },
+          "config": {
+            "conditions": [
+              {
+                "left": "{{ $json.isOwnerMoveInNotify }}",
+                "operator": "isTrue",
+                "right": ""
+              }
+            ],
+            "combine": "and"
+          }
+        },
+        {
+          "id": "g_r9",
+          "type": "comm.gmailSend",
+          "name": "Email owner: Tenant moved in",
+          "position": {
+            "x": 2480,
+            "y": 1360
+          },
+          "config": {
+            "to": "{{ $json.ownerEmails }}",
+            "cc": "operation@widebed.com, customerservice@widebed.com, admin@widebed.com",
+            "bcc": "",
+            "subject": "NO-REPLY. Tenant Moved In: {{ $json.propertyName }} - {{ $json.unitNumber }}",
+            "format": "html",
+            "body": "<p>Dear Valued Owner,</p>\n\n<p>This is an automated update to inform you that the tenant has <strong>MOVED IN</strong>.</p>\n\n<p>\n<strong>Property:</strong> {{ $json.propertyName }}<br>\n<strong>Unit:</strong> {{ $json.unitNumber }}<br>\n<strong>Tenant:</strong> {{ $json.guestName }}<br>\n<strong>Move-in Date:</strong> {{ $json.checkInDisplay }}<br>\n<strong>Total Stay Duration:</strong> {{ $json.stayingDaysLabel }}\n</p>\n\n<p>Regards,<br><strong>Widebed Property Rental Management Team</strong></p>\n<br>\n<hr style=\"border:none; border-top:1px solid #eee;\" />\n<p style=\"color: #888888; font-size: 12px; font-style: italic;\">\nNote: This is an automated notification for monthly stay records. If you have already acknowledged these details, please kindly ignore this email.\n</p>",
+            "replyTo": "",
+            "fromName": "Widebed",
+            "keepItem": true
+          },
+          "credentialId": "cred_gmail_widebed"
+        },
+        {
+          "id": "u_r9",
+          "type": "data.firebaseUpdate",
+          "name": "PMS: Move-in Status = Sent",
+          "position": {
+            "x": 2760,
+            "y": 1360
+          },
+          "config": {
+            "collection": "offlineBookings",
+            "docId": "{{ $json.id }}",
+            "data": "{\n  \"moveInStatus\": \"Sent\"\n}",
+            "mode": "fail"
+          },
+          "credentialId": "cred_pms_tenant_emails"
+        },
+        {
+          "id": "f_r10",
+          "type": "logic.filter",
+          "name": "Rule 10: Owner — tenant moved out",
+          "position": {
+            "x": 2200,
+            "y": 1600
+          },
+          "config": {
+            "conditions": [
+              {
+                "left": "{{ $json.isOwnerMoveOutNotify }}",
+                "operator": "isTrue",
+                "right": ""
+              }
+            ],
+            "combine": "and"
+          }
+        },
+        {
+          "id": "g_r10",
+          "type": "comm.gmailSend",
+          "name": "Email owner: Tenant moved out",
+          "position": {
+            "x": 2480,
+            "y": 1600
+          },
+          "config": {
+            "to": "{{ $json.ownerEmails }}",
+            "cc": "operation@widebed.com, customerservice@widebed.com, admin@widebed.com",
+            "bcc": "",
+            "subject": "NO-REPLY. Tenant Moved Out: {{ $json.propertyName }} - {{ $json.unitNumber }}",
+            "format": "html",
+            "body": "<p>Dear Valued Owner,</p>\n\n<p>This is an automated update to inform you that the tenant has <strong>MOVED OUT</strong>.</p>\n\n<p>\n<strong>Property:</strong> {{ $json.propertyName }}<br>\n<strong>Unit:</strong> {{ $json.unitNumber }}<br>\n<strong>Tenant:</strong> {{ $json.guestName }}<br>\n<strong>Move-out Date:</strong> {{ $json.checkOutDisplay }}<br>\n<strong>Total Stay Duration:</strong> {{ $json.stayingDaysLabel }}\n</p>\n\n<p>Regards,<br><strong>Widebed Property Rental Management Team</strong></p>\n<br>\n<hr style=\"border:none; border-top:1px solid #eee;\" />\n<p style=\"color: #888888; font-size: 12px; font-style: italic;\">\nNote: This is an automated notification for monthly stay records. If you have already acknowledged these details, please kindly ignore this email.\n</p>",
+            "replyTo": "",
+            "fromName": "Widebed",
+            "keepItem": true
+          },
+          "credentialId": "cred_gmail_widebed"
+        },
+        {
+          "id": "u_r10",
+          "type": "data.firebaseUpdate",
+          "name": "PMS: Move-out Status = Sent",
+          "position": {
+            "x": 2760,
+            "y": 1600
+          },
+          "config": {
+            "collection": "offlineBookings",
+            "docId": "{{ $json.id }}",
+            "data": "{\n  \"moveOutStatus\": \"Sent\"\n}",
+            "mode": "fail"
+          },
+          "credentialId": "cred_pms_tenant_emails"
+        }
+      ],
+      "connections": [
+        {
+          "id": "e_trg_bk_main",
+          "source": "trg",
+          "sourceHandle": "main",
+          "target": "bk",
+          "targetHandle": "main"
+        },
+        {
+          "id": "e_bk_sec_main",
+          "source": "bk",
+          "sourceHandle": "main",
+          "target": "sec",
+          "targetHandle": "main"
+        },
+        {
+          "id": "e_sec_ten_main",
+          "source": "sec",
+          "sourceHandle": "main",
+          "target": "ten",
+          "targetHandle": "main"
+        },
+        {
+          "id": "e_ten_unit_main",
+          "source": "ten",
+          "sourceHandle": "main",
+          "target": "unit",
+          "targetHandle": "main"
+        },
+        {
+          "id": "e_unit_prop_main",
+          "source": "unit",
+          "sourceHandle": "main",
+          "target": "prop",
+          "targetHandle": "main"
+        },
+        {
+          "id": "e_prop_own_main",
+          "source": "prop",
+          "sourceHandle": "main",
+          "target": "own",
+          "targetHandle": "main"
+        },
+        {
+          "id": "e_own_bill_main",
+          "source": "own",
+          "sourceHandle": "main",
+          "target": "bill",
+          "targetHandle": "main"
+        },
+        {
+          "id": "e_bill_code_main",
+          "source": "bill",
+          "sourceHandle": "main",
+          "target": "code",
+          "targetHandle": "main"
+        },
+        {
+          "id": "e_code_f_r1_main",
+          "source": "code",
+          "sourceHandle": "main",
+          "target": "f_r1",
+          "targetHandle": "main"
+        },
+        {
+          "id": "e_f_r1_g_r1_main",
+          "source": "f_r1",
+          "sourceHandle": "main",
+          "target": "g_r1",
+          "targetHandle": "main"
+        },
+        {
+          "id": "e_code_f_r2_main",
+          "source": "code",
+          "sourceHandle": "main",
+          "target": "f_r2",
+          "targetHandle": "main"
+        },
+        {
+          "id": "e_f_r2_g_r2_main",
+          "source": "f_r2",
+          "sourceHandle": "main",
+          "target": "g_r2",
+          "targetHandle": "main"
+        },
+        {
+          "id": "e_code_f_r3_main",
+          "source": "code",
+          "sourceHandle": "main",
+          "target": "f_r3",
+          "targetHandle": "main"
+        },
+        {
+          "id": "e_f_r3_g_r3_main",
+          "source": "f_r3",
+          "sourceHandle": "main",
+          "target": "g_r3",
+          "targetHandle": "main"
+        },
+        {
+          "id": "e_code_f_r4_main",
+          "source": "code",
+          "sourceHandle": "main",
+          "target": "f_r4",
+          "targetHandle": "main"
+        },
+        {
+          "id": "e_f_r4_g_r4_main",
+          "source": "f_r4",
+          "sourceHandle": "main",
+          "target": "g_r4",
+          "targetHandle": "main"
+        },
+        {
+          "id": "e_code_f_r5_main",
+          "source": "code",
+          "sourceHandle": "main",
+          "target": "f_r5",
+          "targetHandle": "main"
+        },
+        {
+          "id": "e_f_r5_g_r5_main",
+          "source": "f_r5",
+          "sourceHandle": "main",
+          "target": "g_r5",
+          "targetHandle": "main"
+        },
+        {
+          "id": "e_g_r5_u_r5a_main",
+          "source": "g_r5",
+          "sourceHandle": "main",
+          "target": "u_r5a",
+          "targetHandle": "main"
+        },
+        {
+          "id": "e_g_r5_u_r5b_main",
+          "source": "g_r5",
+          "sourceHandle": "main",
+          "target": "u_r5b",
+          "targetHandle": "main"
+        },
+        {
+          "id": "e_code_f_r6_main",
+          "source": "code",
+          "sourceHandle": "main",
+          "target": "f_r6",
+          "targetHandle": "main"
+        },
+        {
+          "id": "e_f_r6_g_r6_main",
+          "source": "f_r6",
+          "sourceHandle": "main",
+          "target": "g_r6",
+          "targetHandle": "main"
+        },
+        {
+          "id": "e_code_f_r7_main",
+          "source": "code",
+          "sourceHandle": "main",
+          "target": "f_r7",
+          "targetHandle": "main"
+        },
+        {
+          "id": "e_f_r7_g_r7_main",
+          "source": "f_r7",
+          "sourceHandle": "main",
+          "target": "g_r7",
+          "targetHandle": "main"
+        },
+        {
+          "id": "e_code_f_r8_main",
+          "source": "code",
+          "sourceHandle": "main",
+          "target": "f_r8",
+          "targetHandle": "main"
+        },
+        {
+          "id": "e_f_r8_g_r8_main",
+          "source": "f_r8",
+          "sourceHandle": "main",
+          "target": "g_r8",
+          "targetHandle": "main"
+        },
+        {
+          "id": "e_g_r8_u_r8_main",
+          "source": "g_r8",
+          "sourceHandle": "main",
+          "target": "u_r8",
+          "targetHandle": "main"
+        },
+        {
+          "id": "e_code_f_r9_main",
+          "source": "code",
+          "sourceHandle": "main",
+          "target": "f_r9",
+          "targetHandle": "main"
+        },
+        {
+          "id": "e_f_r9_g_r9_main",
+          "source": "f_r9",
+          "sourceHandle": "main",
+          "target": "g_r9",
+          "targetHandle": "main"
+        },
+        {
+          "id": "e_g_r9_u_r9_main",
+          "source": "g_r9",
+          "sourceHandle": "main",
+          "target": "u_r9",
+          "targetHandle": "main"
+        },
+        {
+          "id": "e_code_f_r10_main",
+          "source": "code",
+          "sourceHandle": "main",
+          "target": "f_r10",
+          "targetHandle": "main"
+        },
+        {
+          "id": "e_f_r10_g_r10_main",
+          "source": "f_r10",
+          "sourceHandle": "main",
+          "target": "g_r10",
+          "targetHandle": "main"
+        },
+        {
+          "id": "e_g_r10_u_r10_main",
+          "source": "g_r10",
+          "sourceHandle": "main",
+          "target": "u_r10",
+          "targetHandle": "main"
+        }
+      ],
+      "settings": {}
+    }
+  },
+  "credentials": [
+    {
+      "credentialId": "cred_pms_tenant_emails",
+      "name": "Widebed PMS - Tenant emails",
+      "provider": "firebase_service_account"
+    },
+    {
+      "credentialId": "cred_gmail_widebed",
+      "name": "Gmail account",
+      "provider": "google_oauth"
+    }
+  ]
+}

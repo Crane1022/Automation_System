@@ -1,0 +1,16 @@
+{
+  "extends": "@vue/tsconfig/tsconfig.dom.json",
+  "compilerOptions": {
+    "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.app.tsbuildinfo",
+    "strict": true,
+    "noEmit": true,
+    "baseUrl": ".",
+    "allowImportingTsExtensions": false,
+    "paths": {
+      "@/*": ["./src/*"],
+      "@widebed/shared": ["../../packages/shared/src/index.ts"]
+    },
+    "types": ["vite/client"]
+  },
+  "include": ["src/**/*.ts", "src/**/*.vue", "../../packages/shared/src/**/*.ts"]
+}

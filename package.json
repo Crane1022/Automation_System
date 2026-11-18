@@ -1,0 +1,36 @@
+{
+  "name": "widebed-automation",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Widebed Automation — self-hosted visual workflow automation platform",
+  "workspaces": [
+    "packages/shared",
+    "packages/nodes",
+    "packages/engine",
+    "apps/api",
+    "apps/web"
+  ],
+  "scripts": {
+    "build:packages": "tsc -b packages/shared packages/nodes packages/engine",
+    "build": "npm run build:packages && npm run build -w apps/api && npm run build -w apps/web",
+    "dev:api": "npm run build:packages && npm run dev -w apps/api",
+    "dev:web": "npm run dev -w apps/web",
+    "test": "npm run build:packages && vitest run",
+    "typecheck": "npm run build:packages && tsc -p apps/api --noEmit && npm run typecheck -w apps/web",
+    "dev:worker": "npm run build:packages && npm run dev:worker -w apps/api"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "typescript": "~5.7.2",
+    "vitest": "^3.0.0"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^1.10.0",
+    "@google/generative-ai": "^0.24.1",
+    "playwright": "^1.65.1",
+    "puppeteer": "^25.18.1"
+  }
+}

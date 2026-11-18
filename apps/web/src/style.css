@@ -1,0 +1,416 @@
+@import 'tailwindcss';
+@import '@fontsource-variable/inter';
+@import '@vue-flow/core/dist/style.css';
+@import '@vue-flow/core/dist/theme-default.css';
+@import '@vue-flow/controls/dist/style.css';
+@import '@vue-flow/minimap/dist/style.css';
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+/*
+ * Design tokens. Components use these semantic names (bg-surface, text-muted,
+ * border-line, bg-brand …) so light and dark mode come from one place.
+ */
+@theme {
+  --font-sans: 'Inter Variable', ui-sans-serif, system-ui, sans-serif;
+  --font-mono: ui-monospace, 'SFMono-Regular', Menlo, monospace;
+
+  --color-canvas: var(--wb-canvas);
+  --color-surface: var(--wb-surface);
+  --color-surface-2: var(--wb-surface-2);
+  --color-line: var(--wb-line);
+  --color-line-strong: var(--wb-line-strong);
+  --color-ink: var(--wb-ink);
+  --color-muted: var(--wb-muted);
+  --color-subtle: var(--wb-subtle);
+
+  --color-brand: var(--wb-brand);
+  --color-brand-hover: var(--wb-brand-hover);
+  --color-brand-soft: var(--wb-brand-soft);
+  --color-brand-ink: var(--wb-brand-ink);
+  --color-moss: var(--wb-moss);
+  --color-moss-soft: var(--wb-moss-soft);
+
+  --color-ok: var(--wb-ok);
+  --color-ok-soft: var(--wb-ok-soft);
+  --color-bad: var(--wb-bad);
+  --color-bad-soft: var(--wb-bad-soft);
+  --color-warn: var(--wb-warn);
+  --color-warn-soft: var(--wb-warn-soft);
+  --color-info: var(--wb-info);
+  --color-info-soft: var(--wb-info-soft);
+
+  --radius-card: 10px;
+  --shadow-card: 0 1px 2px rgb(30 28 20 / 0.04);
+  --shadow-pop: 0 8px 24px rgb(30 28 20 / 0.12);
+}
+
+:root {
+  --wb-canvas: #f6f4ef;
+  --wb-surface: #ffffff;
+  --wb-surface-2: #faf9f6;
+  --wb-line: #e8e4da;
+  --wb-line-strong: #d6d0c2;
+  --wb-ink: #1d211d;
+  --wb-muted: #5f665e;
+  --wb-subtle: #8c918a;
+
+  --wb-brand: #1f5e3b;
+  --wb-brand-hover: #184b2f;
+  --wb-brand-soft: #e6efe8;
+  --wb-brand-ink: #ffffff;
+  --wb-moss: #7d8f4e;
+  --wb-moss-soft: #eef1e2;
+
+  --wb-ok: #2f7d4f;
+  --wb-ok-soft: #e5f2ea;
+  --wb-bad: #b4372f;
+  --wb-bad-soft: #f9e7e5;
+  --wb-warn: #a06a12;
+  --wb-warn-soft: #f8eedb;
+  --wb-info: #2d6190;
+  --wb-info-soft: #e5eef7;
+
+  --wb-grid: #dcd7cb;
+  color-scheme: light;
+}
+
+.dark {
+  --wb-canvas: #121412;
+  --wb-surface: #1a1d1a;
+  --wb-surface-2: #161916;
+  --wb-line: #2a2f2a;
+  --wb-line-strong: #384038;
+  --wb-ink: #e9ece7;
+  --wb-muted: #a3aaa1;
+  --wb-subtle: #757d74;
+
+  --wb-brand: #4f9a6c;
+  --wb-brand-hover: #5daa79;
+  --wb-brand-soft: #1e2d23;
+  --wb-brand-ink: #0d140f;
+  --wb-moss: #a7b77a;
+  --wb-moss-soft: #262b1d;
+
+  --wb-ok: #5fb583;
+  --wb-ok-soft: #1b2b21;
+  --wb-bad: #e2786f;
+  --wb-bad-soft: #33201e;
+  --wb-warn: #d9a54a;
+  --wb-warn-soft: #30281a;
+  --wb-info: #79a9d6;
+  --wb-info-soft: #1b2733;
+
+  --wb-grid: #2b302b;
+  color-scheme: dark;
+}
+
+html,
+body,
+#app {
+  height: 100%;
+}
+body {
+  @apply bg-canvas text-ink font-sans antialiased;
+  font-size: 14px;
+  font-feature-settings: 'cv11', 'ss01';
+}
+
+/* Reusable component classes (Tailwind v4 utilities so they can be composed) */
+@utility card {
+  @apply bg-surface border border-line rounded-[var(--radius-card)] shadow-[var(--shadow-card)];
+}
+@utility btn {
+  @apply relative inline-flex items-center justify-center gap-1.5 h-8 px-3 rounded-md text-[13px] font-medium border select-none disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap;
+  transition: background-color 0.15s var(--ease-out), border-color 0.15s var(--ease-out), color 0.15s var(--ease-out), box-shadow 0.15s var(--ease-out), transform 0.1s var(--ease-out);
+}
+@utility btn-primary {
+  @apply btn bg-brand text-brand-ink border-brand hover:bg-brand-hover hover:border-brand-hover;
+}
+@utility btn-secondary {
+  @apply btn bg-surface text-ink border-line-strong hover:bg-surface-2;
+}
+@utility btn-ghost {
+  @apply btn bg-transparent text-muted border-transparent hover:bg-surface-2 hover:text-ink;
+}
+@utility btn-danger {
+  @apply btn bg-surface text-bad border-line-strong hover:bg-bad-soft;
+}
+@utility btn-icon {
+  @apply btn;
+  /* plain declarations come after @apply output, so they win over btn padding */
+  width: 2rem;
+  padding-left: 0;
+  padding-right: 0;
+}
+@utility input {
+  transition: border-color 0.15s var(--ease-out), box-shadow 0.15s var(--ease-out);
+  @apply w-full h-8 px-2.5 rounded-md bg-surface border border-line-strong text-ink text-[13px] placeholder:text-subtle outline-none focus:border-brand focus:ring-2 focus:ring-brand/15 transition;
+}
+@utility textarea {
+  @apply input h-auto py-2 leading-relaxed;
+}
+@utility label {
+  @apply block text-[12px] font-medium text-muted mb-1;
+}
+@utility page-title {
+  @apply text-[20px] font-semibold tracking-tight text-ink;
+}
+@utility section-title {
+  @apply text-[13px] font-semibold text-ink;
+}
+@utility table-head {
+  @apply text-left text-[11px] font-semibold uppercase tracking-wide text-subtle px-4 py-2.5 border-b border-line;
+}
+@utility table-cell {
+  @apply px-4 py-2.5 border-b border-line text-[13px];
+}
+@utility chip {
+  @apply inline-flex items-center gap-1 h-5 px-1.5 rounded text-[11px] font-medium bg-surface-2 text-muted border border-line;
+}
+@utility kbd {
+  @apply inline-flex items-center h-5 px-1.5 rounded border border-line bg-surface-2 text-[11px] font-mono text-muted;
+}
+
+/* ================= Motion =================
+   One small set of animations used everywhere. Everything turns off for people who ask their
+   computer for less motion (prefers-reduced-motion). */
+:root {
+  --ease-out: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --ease-spring: cubic-bezier(0.34, 1.4, 0.64, 1);
+}
+
+@keyframes wb-fade-up {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes wb-fade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes wb-pop {
+  from { opacity: 0; transform: translateY(8px) scale(0.97); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes wb-menu {
+  from { opacity: 0; transform: translateY(-4px) scale(0.98); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes wb-shimmer {
+  from { background-position: 150% 0; }
+  to { background-position: -50% 0; }
+}
+@keyframes wb-spin { to { transform: rotate(360deg); } }
+@keyframes wb-dot {
+  0%, 80%, 100% { opacity: 0.25; transform: translateY(0); }
+  40% { opacity: 1; transform: translateY(-3px); }
+}
+@keyframes wb-ring {
+  0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--wb-info) 45%, transparent); }
+  100% { box-shadow: 0 0 0 10px color-mix(in srgb, var(--wb-info) 0%, transparent); }
+}
+@keyframes wb-flash-ok {
+  0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--wb-ok) 50%, transparent); }
+  100% { box-shadow: 0 0 0 8px color-mix(in srgb, var(--wb-ok) 0%, transparent); }
+}
+
+/* Content that appears: fade up. Lists can stagger with style="--i: index".
+   "backwards" (not "both"): once finished, the element keeps no transform, so it doesn't become its own layer
+   and pop-up menus inside one row are not covered by the next row. */
+.animate-in {
+  animation: wb-fade-up 0.28s var(--ease-out) backwards;
+  animation-delay: calc(min(var(--i, 0), 12) * 35ms);
+}
+.animate-pop { animation: wb-pop 0.22s var(--ease-out) both; }
+.animate-menu { animation: wb-menu 0.14s var(--ease-out) both; transform-origin: top right; }
+
+/* Skeleton placeholders while data loads */
+.skeleton {
+  border-radius: 6px;
+  background: linear-gradient(90deg, var(--wb-surface-2) 0%, var(--wb-line) 50%, var(--wb-surface-2) 100%);
+  background-size: 200% 100%;
+  animation: wb-shimmer 1.3s ease-in-out infinite;
+}
+
+/* Buttons: a small press, and a spinner while what they started is still running (lib/loading.ts). */
+.btn:not(:disabled):active,
+button.btn-primary:not(:disabled):active,
+button.btn-secondary:not(:disabled):active { transform: scale(0.97); }
+.is-loading {
+  color: transparent !important;
+  pointer-events: none;
+}
+.is-loading:not(.absolute):not(.fixed) { position: relative; }
+.is-loading > * { visibility: hidden; }
+.is-loading::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  width: 14px;
+  height: 14px;
+  border-radius: 9999px;
+  border: 2px solid var(--wb-spin, var(--wb-ink));
+  border-right-color: transparent;
+  animation: wb-spin 0.6s linear infinite;
+}
+.btn-primary.is-loading, .bg-brand.is-loading { --wb-spin: var(--wb-brand-ink); }
+
+/* Cards that can be clicked lift a little */
+.card-hover {
+  transition: transform 0.18s var(--ease-out), box-shadow 0.18s var(--ease-out), border-color 0.18s var(--ease-out);
+}
+.card-hover:hover { transform: translateY(-2px); box-shadow: var(--shadow-pop); }
+
+/* “Thinking” dots */
+.dots { display: inline-flex; gap: 3px; align-items: center; }
+.dots > span { width: 5px; height: 5px; border-radius: 9999px; background: currentColor; animation: wb-dot 1.1s ease-in-out infinite; }
+.dots > span:nth-child(2) { animation-delay: 0.15s; }
+.dots > span:nth-child(3) { animation-delay: 0.3s; }
+
+/* Page changes */
+.page-enter-active { transition: opacity 0.2s var(--ease-out), transform 0.2s var(--ease-out); }
+.page-leave-active { transition: opacity 0.1s ease-in; }
+.page-enter-from { opacity: 0; transform: translateY(6px); }
+.page-leave-to { opacity: 0; }
+
+/* Pop-ups */
+.modal-enter-active { transition: opacity 0.18s var(--ease-out); }
+.modal-enter-active .modal-panel { transition: transform 0.22s var(--ease-spring), opacity 0.18s var(--ease-out); }
+.modal-leave-active { transition: opacity 0.12s ease-in; }
+.modal-enter-from { opacity: 0; }
+.modal-enter-from .modal-panel { opacity: 0; transform: translateY(10px) scale(0.97); }
+.modal-leave-to { opacity: 0; }
+
+/* Side panels slide in from the right */
+@keyframes wb-slide-in { from { opacity: 0; transform: translateX(16px); } to { opacity: 1; transform: none; } }
+.panel-slide { animation: wb-slide-in 0.22s var(--ease-out) both; }
+
+/* Editor: a node that is running pulses, a node that just succeeded flashes green once */
+.wb-node-running { animation: wb-ring 1.2s ease-out infinite; }
+.wb-node-done { animation: wb-flash-ok 0.7s ease-out 1; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+  .skeleton { animation: none; }
+}
+
+/* Icons inside buttons never shrink */
+.btn svg,
+button svg {
+  flex-shrink: 0;
+}
+
+/* Vue Flow theme overrides */
+.vue-flow {
+  --vf-node-bg: var(--wb-surface);
+  --vf-node-text: var(--wb-ink);
+  --vf-connection-path: var(--wb-subtle);
+  --vf-handle: var(--wb-line-strong);
+}
+.vue-flow__edge-path {
+  stroke: var(--wb-line-strong);
+  stroke-width: 1.75;
+}
+.vue-flow__edge.selected .vue-flow__edge-path,
+.vue-flow__edge:hover .vue-flow__edge-path {
+  stroke: var(--wb-brand);
+}
+.vue-flow__edge.wb-edge-active .vue-flow__edge-path {
+  stroke: var(--wb-ok);
+  stroke-width: 2.25;
+}
+.vue-flow__edge-textbg {
+  fill: var(--wb-canvas);
+}
+.vue-flow__edge-text {
+  fill: var(--wb-muted);
+  font-size: 11px;
+}
+.vue-flow__controls {
+  @apply shadow-none border border-line rounded-md overflow-hidden;
+}
+.vue-flow .vue-flow__controls .vue-flow__controls-button {
+  background: var(--wb-surface);
+  border-bottom: 1px solid var(--wb-line);
+  fill: var(--wb-muted);
+  color: var(--wb-muted);
+}
+.vue-flow .vue-flow__controls .vue-flow__controls-button:hover {
+  background: var(--wb-surface-2);
+}
+.vue-flow__minimap {
+  background: var(--wb-surface);
+  @apply border border-line rounded-md;
+}
+.vue-flow__node.selected > .wb-node {
+  @apply ring-2 ring-brand/40 border-brand;
+}
+.vue-flow__selection {
+  background: rgb(31 94 59 / 0.06);
+  border-color: var(--wb-brand);
+}
+
+/* Thin scrollbars */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--wb-line-strong) transparent;
+}
+
+/* ===================================================== AI Staff: chat answers */
+.md { font-size: 13.5px; line-height: 1.65; overflow-wrap: anywhere; }
+.md > * + * { margin-top: 0.6em; }
+.md h3 { font-size: 15px; font-weight: 600; margin-top: 1em; }
+.md h4, .md h5, .md h6 { font-size: 13.5px; font-weight: 600; margin-top: 0.9em; }
+.md ul, .md ol { padding-left: 1.3em; }
+.md ul { list-style: disc; }
+.md ol { list-style: decimal; }
+.md li + li { margin-top: 0.2em; }
+.md li::marker { color: var(--color-subtle); }
+.md a { color: var(--color-brand); text-decoration: underline; text-underline-offset: 2px; }
+.md strong { font-weight: 600; }
+.md blockquote { border-left: 3px solid var(--color-line-strong); padding-left: 0.8em; color: var(--color-muted); }
+.md hr { border: 0; border-top: 1px solid var(--color-line); }
+.md code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12.5px; background: var(--color-surface-2); border: 1px solid var(--color-line); border-radius: 4px; padding: 0 4px; }
+.md .code-block { position: relative; background: var(--color-surface-2); border: 1px solid var(--color-line); border-radius: 8px; padding: 28px 12px 10px; overflow-x: auto; }
+.md .code-block code { border: 0; background: none; padding: 0; font-size: 12.5px; white-space: pre; }
+.md .code-lang { position: absolute; top: 6px; left: 12px; font-size: 11px; color: var(--color-subtle); }
+.md .code-copy { position: absolute; top: 4px; right: 6px; font-size: 11px; color: var(--color-muted); padding: 2px 8px; border-radius: 4px; }
+.md .code-copy:hover { background: var(--color-surface); color: var(--color-ink); }
+.md .tok-k { color: #7c3aed; }
+.md .tok-s { color: #15803d; }
+.md .tok-n { color: #b45309; }
+.md .tok-c { color: var(--color-subtle); font-style: italic; }
+.dark .md .tok-k { color: #c4a5f5; }
+.dark .md .tok-s { color: #86d19f; }
+.dark .md .tok-n { color: #f0b46c; }
+.md .md-table { overflow-x: auto; border: 1px solid var(--color-line); border-radius: 8px; }
+.md table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.md th { text-align: left; font-weight: 600; background: var(--color-surface-2); }
+.md th, .md td { padding: 6px 10px; border-bottom: 1px solid var(--color-line); vertical-align: top; }
+.md tr:last-child td { border-bottom: 0; }
+
+/* Blinking caret at the end of an answer that is still being typed */
+.typing-caret::after { content: ''; display: inline-block; width: 7px; height: 1.05em; margin-left: 2px; vertical-align: -0.15em; background: var(--color-brand); border-radius: 1px; animation: wb-caret 1s steps(1) infinite; }
+@keyframes wb-caret { 50% { opacity: 0; } }
+
+/* AI employee avatar: soft ring that breathes while it is working */
+@keyframes wb-breathe { 0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--agent, var(--color-brand)) 45%, transparent); } 50% { box-shadow: 0 0 0 6px color-mix(in srgb, var(--agent, var(--color-brand)) 0%, transparent); } }
+.agent-working { animation: wb-breathe 1.6s ease-in-out infinite; }
+
+/* Cards lift a little on hover */
+.lift { transition: transform 0.18s var(--ease-out), box-shadow 0.18s var(--ease-out), border-color 0.18s; }
+.lift:hover { transform: translateY(-2px); box-shadow: var(--shadow-pop); }
+
+/* Small menus pop in from their button */
+.pop-enter-active { transition: opacity 0.14s var(--ease-out), transform 0.16s var(--ease-spring); transform-origin: top right; }
+.pop-leave-active { transition: opacity 0.1s ease-in; }
+.pop-enter-from { opacity: 0; transform: scale(0.95) translateY(-4px); }
+.pop-leave-to { opacity: 0; }
+
+/* Lists that animate items in and out (chat list) */
+.list-move, .list-enter-active, .list-leave-active { transition: all 0.22s var(--ease-out); }
+.list-enter-from { opacity: 0; transform: translateX(-8px); }
+.list-leave-to { opacity: 0; transform: translateX(8px); }
+.list-leave-active { position: absolute; }
