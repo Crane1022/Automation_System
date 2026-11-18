@@ -4,14 +4,14 @@
     "api": {
       "root": "apps/api",
       "framework": "express",
-      "installCommand": "cd ../.. && PUPPETEER_SKIP_DOWNLOAD=1 npm ci --no-audit --no-fund",
+      "installCommand": "cd ../.. && PUPPETEER_SKIP_DOWNLOAD=1 npm ci --include=dev --no-audit --no-fund",
       "buildCommand": "cd ../.. && npm run build:packages && npm run build -w apps/api",
       "entrypoint": "index.js"
     },
     "web": {
       "root": "apps/web",
       "framework": "vite",
-      "installCommand": "cd ../.. && PUPPETEER_SKIP_DOWNLOAD=1 npm ci --no-audit --no-fund",
+      "installCommand": "cd ../.. && PUPPETEER_SKIP_DOWNLOAD=1 npm ci --include=dev --no-audit --no-fund",
       "buildCommand": "cd ../.. && npm run build:packages && npm run build -w apps/web",
       "outputDirectory": "dist",
       "rewrites": [{ "source": "/(.*)", "destination": "/index.html" }]
