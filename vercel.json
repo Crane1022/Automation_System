@@ -6,7 +6,7 @@
       "framework": "express",
       "installCommand": "cd ../.. && PUPPETEER_SKIP_DOWNLOAD=1 npm ci --no-audit --no-fund",
       "buildCommand": "cd ../.. && npm run build:packages && npm run build -w apps/api",
-      "entrypoint": "dist/vercel.js"
+      "entrypoint": "index.js"
     },
     "web": {
       "root": "apps/web",
