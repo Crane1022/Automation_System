@@ -7,6 +7,8 @@ declare module 'vue-router' {
     public?: boolean;
     permission?: Permission;
     title?: string;
+    /** Page is shown in the menu but blocked with an "Under construction" screen. */
+    underConstruction?: boolean;
   }
 }
 
@@ -21,7 +23,7 @@ export const router = createRouter({
       path: '/',
       component: () => import('@/layouts/AppLayout.vue'),
       children: [
-        { path: '', component: () => import('@/views/OverviewView.vue'), meta: { title: 'Overview' } },
+        { path: '', component: () => import('@/views/OverviewView.vue'), meta: { title: 'Dashboard' } },
         { path: 'workflows', component: () => import('@/views/WorkflowsView.vue'), meta: { title: 'Workflows' } },
         { path: 'executions', component: () => import('@/views/ExecutionsView.vue'), meta: { title: 'Executions' } },
         { path: 'executions/:id', component: () => import('@/views/ExecutionDetailView.vue'), meta: { title: 'Execution' } },
@@ -29,16 +31,16 @@ export const router = createRouter({
         { path: 'integrations', component: () => import('@/views/IntegrationsView.vue'), meta: { title: 'Integrations' } },
         { path: 'ai-agents', component: () => import('@/views/AiView.vue'), meta: { title: 'AI Settings' } },
         // AI Staff (the Widebed Assistant is one of them; old /assistant links still work)
-        { path: 'ai-staff', component: () => import('@/views/AiStaffView.vue'), meta: { title: 'AI Staff' } },
-        { path: 'ai-staff/new', component: () => import('@/views/AgentEditView.vue'), meta: { title: 'New AI employee', permission: 'agent.manage' } },
-        { path: 'ai-staff/:id/edit', component: () => import('@/views/AgentEditView.vue'), meta: { title: 'Edit AI employee' } },
-        { path: 'ai-tasks', component: () => import('@/views/AiTasksView.vue'), meta: { title: 'AI Tasks' } },
-        { path: 'ai-collaboration', component: () => import('@/views/AiCollaborationView.vue'), meta: { title: 'Collaboration' } },
-        { path: 'ai-performance', component: () => import('@/views/AiPerformanceView.vue'), meta: { title: 'AI Performance' } },
-        { path: 'knowledge', component: () => import('@/views/KnowledgeView.vue'), meta: { title: 'Company Knowledge' } },
-        { path: 'ai-approvals', component: () => import('@/views/AiApprovalsView.vue'), meta: { title: 'Approvals' } },
-        { path: 'ai-schedules', component: () => import('@/views/AiSchedulesView.vue'), meta: { title: 'AI Schedules' } },
-        { path: 'ai-staff/:agentId/chat/:chatId?', component: () => import('@/views/AgentChatView.vue'), meta: { title: 'AI Staff' } },
+        { path: 'ai-staff', component: () => import('@/views/AiStaffView.vue'), meta: { underConstruction: true, title: 'AI Staff' } },
+        { path: 'ai-staff/new', component: () => import('@/views/AgentEditView.vue'), meta: { underConstruction: true, title: 'New AI employee', permission: 'agent.manage' } },
+        { path: 'ai-staff/:id/edit', component: () => import('@/views/AgentEditView.vue'), meta: { underConstruction: true, title: 'Edit AI employee' } },
+        { path: 'ai-tasks', component: () => import('@/views/AiTasksView.vue'), meta: { underConstruction: true, title: 'AI Tasks' } },
+        { path: 'ai-collaboration', component: () => import('@/views/AiCollaborationView.vue'), meta: { underConstruction: true, title: 'Collaboration' } },
+        { path: 'ai-performance', component: () => import('@/views/AiPerformanceView.vue'), meta: { underConstruction: true, title: 'AI Performance' } },
+        { path: 'knowledge', component: () => import('@/views/KnowledgeView.vue'), meta: { underConstruction: true, title: 'Company Knowledge' } },
+        { path: 'ai-approvals', component: () => import('@/views/AiApprovalsView.vue'), meta: { underConstruction: true, title: 'Approvals' } },
+        { path: 'ai-schedules', component: () => import('@/views/AiSchedulesView.vue'), meta: { underConstruction: true, title: 'AI Schedules' } },
+        { path: 'ai-staff/:agentId/chat/:chatId?', component: () => import('@/views/AgentChatView.vue'), meta: { underConstruction: true, title: 'AI Staff' } },
         { path: 'assistant/:id?', redirect: (to) => `/ai-staff/widebed-assistant/chat${typeof to.params.id === 'string' && to.params.id ? `/${to.params.id}` : ''}` },
         { path: 'credentials', component: () => import('@/views/CredentialsView.vue'), meta: { title: 'Credentials' } },
         { path: 'schedules', component: () => import('@/views/SchedulesView.vue'), meta: { title: 'Schedules' } },

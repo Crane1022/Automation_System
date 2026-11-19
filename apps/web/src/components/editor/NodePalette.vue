@@ -9,6 +9,13 @@ import NodeIcon from '@/components/ui/NodeIcon.vue';
 const emit = defineEmits<{ add: [NodeDescriptor] }>();
 const store = useNodeTypesStore();
 const q = ref('');
+const searchEl = ref<HTMLInputElement | null>(null);
+/** Used by the canvas toolbar's "Add node" button. */
+function focusSearch() {
+  searchEl.value?.focus();
+  searchEl.value?.select();
+}
+defineExpose({ focusSearch });
 const order = ['trigger', 'logic', 'data', 'communication', 'ai'];
 
 const groups = computed(() => {
@@ -34,7 +41,7 @@ function onDragStart(e: DragEvent, n: NodeDescriptor) {
     <div class="p-3 border-b border-line">
       <div class="relative">
         <Search class="size-4 text-subtle absolute left-2.5 top-2" />
-        <input v-model="q" class="input pl-8" placeholder="Search nodes" />
+        <input ref="searchEl" v-model="q" class="input pl-8" placeholder="Search nodes" />
       </div>
     </div>
     <div class="flex-1 overflow-y-auto p-2">

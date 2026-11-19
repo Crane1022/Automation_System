@@ -1,0 +1,99 @@
+From bd4f8f2f18fb15bfaca988366a965aeeec6d3a7c Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Thu, 19 Nov 2026 09:45:50 +0800
+Subject: [PATCH] Vercel: bundle the API into dist/index.cjs and mark dist/ as
+ ES modules
+
+Vercel's Express preset deploys dist/ without apps/api/package.json and picks
+dist/app|index|server.js as the entry, so the ESM output ran as CommonJS.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Way2MS1H6pPjhw4J1S9nj4
+---
+ apps/api/index.cjs                |  7 +++----
+ apps/api/package.json             |  2 +-
+ apps/api/scripts/build-vercel.mjs | 25 +++++++++++++++++++++++++
+ apps/api/vercel/index.js          |  3 ---
+ apps/api/vercel/package.json      |  1 -
+ 5 files changed, 29 insertions(+), 9 deletions(-)
+ create mode 100644 apps/api/scripts/build-vercel.mjs
+ delete mode 100644 apps/api/vercel/index.js
+ delete mode 100644 apps/api/vercel/package.json
+
+diff --git a/apps/api/index.cjs b/apps/api/index.cjs
+index 98a17cb..1b9b723 100644
+--- a/apps/api/index.cjs
++++ b/apps/api/index.cjs
+@@ -1,6 +1,5 @@
+ // Vercel entry for the API service (see vercel.json → services.api.entrypoint).
+-// CommonJS on purpose: Vercel loads its entry file as CommonJS, so an ES-module entry crashes
+-// with "Cannot use import statement outside a module". The real app (src/vercel.ts) is bundled
+-// into vercel/index.js by the build command ("npm run build:vercel -w apps/api").
++// CommonJS on purpose: Vercel loads its entry file as CommonJS. The real app (src/vercel.ts) is
++// bundled into dist/index.cjs by the build command ("npm run build:vercel -w apps/api").
+ require('express'); // lets Vercel recognise this as the Express entry
+-module.exports = require('./vercel/index.js');
++module.exports = require('./dist/index.cjs');
+diff --git a/apps/api/package.json b/apps/api/package.json
+index ad74af0..4226c19 100644
+--- a/apps/api/package.json
++++ b/apps/api/package.json
+@@ -10,7 +10,7 @@
+     "start": "node dist/main.js",
+     "dev:worker": "tsx watch src/worker.ts",
+     "start:worker": "node dist/worker.js",
+-    "build:vercel": "tsc -p tsconfig.json && esbuild dist/vercel.js --bundle --platform=node --target=node22 --format=cjs --outfile=vercel/index.js --external:bullmq --external:cors --external:cron-parser --external:express --external:firebase-admin --external:ioredis --external:zod --footer:js=\"module.exports = Object.assign(module.exports.default, { default: module.exports.default });\" --log-level=warning"
++    "build:vercel": "node scripts/build-vercel.mjs"
+   },
+   "dependencies": {
+     "@widebed/engine": "0.1.0",
+diff --git a/apps/api/scripts/build-vercel.mjs b/apps/api/scripts/build-vercel.mjs
+new file mode 100644
+index 0000000..4656bd7
+--- /dev/null
++++ b/apps/api/scripts/build-vercel.mjs
+@@ -0,0 +1,25 @@
++// Builds the API for Vercel ("npm run build:vercel -w apps/api").
++//
++// Vercel's Express preset deploys the contents of dist/ on their own (without apps/api/package.json)
++// and picks dist/app.js, dist/index.js or dist/server.js as the entry. So:
++//   1. the whole app (src/vercel.ts) is bundled into ONE CommonJS file, dist/index.cjs, which
++//      runs no matter which package.json Node finds;
++//   2. dist/package.json marks the other compiled files as ES modules, in case anything loads them.
++import { execSync } from 'node:child_process';
++import { writeFileSync } from 'node:fs';
++
++const externals = ['bullmq', 'cors', 'cron-parser', 'express', 'firebase-admin', 'ioredis', 'zod'];
++const run = (cmd) => execSync(cmd, { stdio: 'inherit' });
++
++run('npx tsc -p tsconfig.json');
++run(
++  [
++    'npx esbuild dist/vercel.js --bundle --platform=node --target=node22 --format=cjs',
++    '--outfile=dist/index.cjs --log-level=warning',
++    ...externals.map((e) => `--external:${e}`),
++    // Export the Express app itself (module.exports = app), as Vercel expects from a CommonJS entry.
++    `--footer:js="module.exports = Object.assign(module.exports.default, { default: module.exports.default });"`,
++  ].join(' '),
++);
++writeFileSync('dist/package.json', JSON.stringify({ type: 'module', private: true }) + '\n');
++console.log('[build-vercel] wrote dist/index.cjs and dist/package.json');
+diff --git a/apps/api/vercel/index.js b/apps/api/vercel/index.js
+deleted file mode 100644
+index 3e6afe0..0000000
+--- a/apps/api/vercel/index.js
++++ /dev/null
+@@ -1,3 +0,0 @@
+-// Placeholder. On Vercel the build command replaces this file with the bundled API
+-// ("npm run build:vercel -w apps/api"). Do not edit; edit src/vercel.ts instead.
+-throw new Error('apps/api/vercel/index.js was not built. Run: npm run build:vercel -w apps/api');
+diff --git a/apps/api/vercel/package.json b/apps/api/vercel/package.json
+deleted file mode 100644
+index 60dd852..0000000
+--- a/apps/api/vercel/package.json
++++ /dev/null
+@@ -1 +0,0 @@
+-{ "type": "commonjs", "private": true }
+-- 
+2.43.0
+

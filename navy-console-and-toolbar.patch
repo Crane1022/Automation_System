@@ -1,0 +1,874 @@
+diff --git a/apps/web/public/favicon.svg b/apps/web/public/favicon.svg
+index 2bc4bc7..98d96f6 100644
+--- a/apps/web/public/favicon.svg
++++ b/apps/web/public/favicon.svg
+@@ -1 +1 @@
+-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" rx="8" fill="#1F5E3B"/><path d="M8 11l3.2 10L16 13l4.8 8L24 11" fill="none" stroke="#E9EFD9" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
++<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" rx="8" fill="#1E40AF"/><path d="M8 11l3.2 10L16 13l4.8 8L24 11" fill="none" stroke="#FFFFFF" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+diff --git a/apps/web/src/components/NotificationBell.vue b/apps/web/src/components/NotificationBell.vue
+index b02c1ea..474a37f 100644
+--- a/apps/web/src/components/NotificationBell.vue
++++ b/apps/web/src/components/NotificationBell.vue
+@@ -40,6 +40,8 @@ const TONE = { 'task.completed': 'text-ok', 'task.failed': 'text-bad', 'issue.ne
+         <span v-if="unread" class="absolute -top-0.5 -right-0.5 min-w-4 h-4 px-1 rounded-full bg-bad text-white text-[10px] font-semibold grid place-items-center tabular-nums">{{ unread > 9 ? '9+' : unread }}</span>
+       </Transition>
+     </button>
++    <!-- Teleported so the popover keeps the page colours, not the navy sidebar's -->
++    <Teleport to="body">
+     <Transition name="pop">
+       <div
+         v-if="open"
+@@ -70,6 +72,7 @@ const TONE = { 'task.completed': 'text-ok', 'task.failed': 'text-bad', 'issue.ne
+         </ul>
+       </div>
+     </Transition>
++    </Teleport>
+   </div>
+ </template>
+ 
+diff --git a/apps/web/src/components/editor/NodePalette.vue b/apps/web/src/components/editor/NodePalette.vue
+index b24a4a2..e5e3063 100644
+--- a/apps/web/src/components/editor/NodePalette.vue
++++ b/apps/web/src/components/editor/NodePalette.vue
+@@ -9,6 +9,13 @@ import NodeIcon from '@/components/ui/NodeIcon.vue';
+ const emit = defineEmits<{ add: [NodeDescriptor] }>();
+ const store = useNodeTypesStore();
+ const q = ref('');
++const searchEl = ref<HTMLInputElement | null>(null);
++/** Used by the canvas toolbar's "Add node" button. */
++function focusSearch() {
++  searchEl.value?.focus();
++  searchEl.value?.select();
++}
++defineExpose({ focusSearch });
+ const order = ['trigger', 'logic', 'data', 'communication', 'ai'];
+ 
+ const groups = computed(() => {
+@@ -34,7 +41,7 @@ function onDragStart(e: DragEvent, n: NodeDescriptor) {
+     <div class="p-3 border-b border-line">
+       <div class="relative">
+         <Search class="size-4 text-subtle absolute left-2.5 top-2" />
+-        <input v-model="q" class="input pl-8" placeholder="Search nodes" />
++        <input ref="searchEl" v-model="q" class="input pl-8" placeholder="Search nodes" />
+       </div>
+     </div>
+     <div class="flex-1 overflow-y-auto p-2">
+diff --git a/apps/web/src/components/ui/UnderConstruction.vue b/apps/web/src/components/ui/UnderConstruction.vue
+new file mode 100644
+index 0000000..116939b
+--- /dev/null
++++ b/apps/web/src/components/ui/UnderConstruction.vue
+@@ -0,0 +1,33 @@
++<script setup lang="ts">
++import { Construction } from '@lucide/vue';
++import { aiTeamUpcoming } from '@/lib/ai-team-preview';
++
++/** "Under construction" notice for the AI Team, with a card for each page that is coming. */
++defineProps<{ compact?: boolean }>();
++</script>
++
++<template>
++  <div class="text-center">
++    <div class="h-2.5 -mx-5 -mt-5 mb-6 bg-[repeating-linear-gradient(135deg,#f2b84b_0_14px,#0f1a33_14px_28px)]" aria-hidden="true" />
++    <div class="mx-auto size-16 rounded-2xl bg-warn-soft text-warn grid place-items-center mb-4">
++      <Construction class="size-8" />
++    </div>
++    <p class="text-[12px] font-semibold uppercase tracking-[0.12em] text-warn">AI Team</p>
++    <h2 class="mt-1 text-[30px] leading-tight font-bold tracking-tight text-ink">Under construction</h2>
++    <p class="mt-2 text-[15px] font-semibold text-bad">Do not use it yet.</p>
++    <p class="mt-1.5 text-[13px] text-muted max-w-md mx-auto">We're still building this. Here's what's coming to the AI Team:</p>
++
++    <div class="mt-6 grid gap-3 text-left" :class="compact ? 'sm:grid-cols-2' : 'sm:grid-cols-2 lg:grid-cols-3'">
++      <div v-for="(p, i) in aiTeamUpcoming" :key="p.title" class="card p-3.5 flex gap-3 animate-in" :style="{ '--i': i }">
++        <span class="size-9 shrink-0 rounded-lg bg-brand-soft text-brand grid place-items-center"><component :is="p.icon" class="size-4.5" /></span>
++        <span class="min-w-0">
++          <span class="flex items-center gap-2">
++            <span class="text-[13.5px] font-semibold text-ink">{{ p.title }}</span>
++            <span class="chip h-4.5 text-[10px] bg-warn-soft text-warn border-transparent">Coming soon</span>
++          </span>
++          <span class="block text-[12px] text-muted mt-0.5 leading-snug">{{ p.text }}</span>
++        </span>
++      </div>
++    </div>
++  </div>
++</template>
+diff --git a/apps/web/src/layouts/AppLayout.vue b/apps/web/src/layouts/AppLayout.vue
+index 02d0526..4e6ad1b 100644
+--- a/apps/web/src/layouts/AppLayout.vue
++++ b/apps/web/src/layouts/AppLayout.vue
+@@ -1,5 +1,5 @@
+ <script setup lang="ts">
+-import { computed, ref, watch } from 'vue';
++import { computed, ref } from 'vue';
+ import { useRoute, useRouter } from 'vue-router';
+ import {
+   Activity,
+@@ -13,22 +13,18 @@ import {
+   Moon,
+   Plug,
+   Settings,
+-  Sparkles,
+   Sun,
+   Users,
+   Workflow,
+   History,
+-  ListTodo,
+-  ShieldCheck,
+-  Network,
+-  BookOpen,
+-  TrendingUp,
+-  ChevronDown,
++  Construction,
+ } from '@lucide/vue';
+ import { useAuthStore } from '@/stores/auth';
+ import { useTheme } from '@/lib/theme';
+ import { roleLabels } from '@/lib/format';
+ import NotificationBell from '@/components/NotificationBell.vue';
++import UnderConstruction from '@/components/ui/UnderConstruction.vue';
++import Modal from '@/components/ui/Modal.vue';
+ import { stopNotifications } from '@/lib/notifications';
+ 
+ const auth = useAuthStore();
+@@ -36,27 +32,14 @@ const route = useRoute();
+ const router = useRouter();
+ const { isDark, toggle } = useTheme();
+ const mobileOpen = ref(false);
++const aiTeamOpen = ref(false);
+ 
+ interface NavItem { to: string; label: string; icon: unknown; phase?: number }
+ interface NavGroup { key: string; label: string; items: NavItem[] }
+ 
+-/** The menu, grouped so it stays short. Groups fold open/closed; the one you are in is always open. */
++/** The menu, grouped by area. Every group is always shown. */
+ const groups = computed<NavGroup[]>(() =>
+   [
+-    // AI Team - HIDDEN
+-    // {
+-    //   key: 'ai',
+-    //   label: 'AI Team',
+-    //   items: [
+-    //     { to: '/ai-staff', label: 'AI Staff', icon: Sparkles },
+-    //     { to: '/ai-tasks', label: 'AI Tasks', icon: ListTodo },
+-    //     { to: '/ai-schedules', label: 'AI Schedules', icon: CalendarClock },
+-    //     { to: '/ai-approvals', label: 'Approvals', icon: ShieldCheck },
+-    //     { to: '/ai-collaboration', label: 'Collaboration', icon: Network },
+-    //     { to: '/knowledge', label: 'Company Knowledge', icon: BookOpen },
+-    //     ...(auth.can('agent.manage') || auth.can('audit.view') || auth.profile?.role === 'department_manager' ? [{ to: '/ai-performance', label: 'AI Performance', icon: TrendingUp }] : []),
+-    //   ],
+-    // },
+     {
+       key: 'automation',
+       label: 'Automation',
+@@ -88,46 +71,14 @@ const groups = computed<NavGroup[]>(() =>
+   ].filter((g) => g.items.length),
+ );
+ 
+-/**
+- * Accordion: one group open at a time. Opening a group closes the others; clicking the open
+- * group closes it. Moving to a page opens that page's group. Remembered in this browser.
+- */
+-const OPEN_KEY = 'wb.nav.open';
+-const openKey = ref<string | null>((() => {
+-  try {
+-    return localStorage.getItem(OPEN_KEY);
+-  } catch {
+-    return null;
+-  }
+-})());
+-const groupActive = (g: NavGroup) => g.items.some((i) => isActive(i.to));
+-const isOpen = (g: NavGroup) => openKey.value === g.key;
+-function remember() {
+-  try {
+-    if (openKey.value) localStorage.setItem(OPEN_KEY, openKey.value);
+-    else localStorage.removeItem(OPEN_KEY);
+-  } catch {
+-    /* private mode: just don't remember */
+-  }
+-}
+-function toggleGroup(g: NavGroup) {
+-  openKey.value = openKey.value === g.key ? null : g.key;
+-  remember();
+-}
+-
+ const isActive = (to: string) => (to === '/' ? route.path === '/' : route.path.startsWith(to));
+-/** Moving to a page opens that page's group (runs after isActive exists). */
+-watch(
+-  () => route.path,
+-  () => {
+-    const g = groups.value.find(groupActive);
+-    if (g && openKey.value !== g.key) {
+-      openKey.value = g.key;
+-      remember();
+-    }
+-  },
+-  { immediate: true },
+-);
++/** Active item: lighter navy with a blue bar on the left. */
++const itemClass = (to: string) => [
++  'relative flex items-center gap-2.5 h-8 px-2.5 rounded-md text-[13px] transition-[background-color,color,transform] duration-150 active:scale-[0.98]',
++  isActive(to)
++    ? 'bg-[var(--wb-nav-active)] text-[var(--wb-nav-ink)] font-medium before:absolute before:left-0 before:inset-y-1 before:w-[3px] before:rounded-full before:bg-[var(--wb-nav-accent)]'
++    : 'text-muted hover:bg-surface-2 hover:text-ink',
++];
+ const initials = computed(() =>
+   (auth.profile?.name ?? '?').split(/\s+/).map((p) => p[0]).slice(0, 2).join('').toUpperCase(),
+ );
+@@ -143,60 +94,46 @@ async function logout() {
+   <div class="h-full flex">
+     <!-- Sidebar -->
+     <aside
+-      class="fixed inset-y-0 left-0 z-40 w-[232px] bg-surface border-r border-line flex flex-col transition-transform lg:static lg:translate-x-0"
++      class="wb-nav fixed inset-y-0 left-0 z-40 w-[232px] border-r border-line flex flex-col transition-transform lg:static lg:translate-x-0"
+       :class="mobileOpen ? 'translate-x-0' : '-translate-x-full'"
+     >
+       <div class="h-14 flex items-center gap-2.5 px-4 border-b border-line">
+         <img src="/favicon.svg" alt="" class="size-7" />
+         <div class="leading-tight flex-1">
+-          <div class="text-[13px] font-semibold">Widebed</div>
++          <div class="text-[13.5px] font-semibold">Widebed</div>
+           <div class="text-[11px] text-subtle">Automation</div>
+         </div>
+         <NotificationBell class="hidden lg:block" placement="sidebar" />
+       </div>
+       <nav class="flex-1 overflow-y-auto p-2">
+-        <RouterLink
+-          to="/"
+-          class="flex items-center gap-2.5 h-8 px-2.5 rounded-md text-[13px] transition-[background-color,color,transform] duration-150 active:scale-[0.98]"
+-          :class="isActive('/') ? 'bg-brand-soft text-brand font-medium' : 'text-muted hover:bg-surface-2 hover:text-ink'"
+-          @click="mobileOpen = false"
+-        >
+-          <LayoutDashboard class="size-4 shrink-0" /><span class="flex-1 truncate">Overview</span>
++        <div class="h-6 px-2.5 flex items-center text-[11px] text-subtle">Overview</div>
++        <RouterLink to="/" :class="itemClass('/')" @click="mobileOpen = false">
++          <LayoutDashboard class="size-4 shrink-0" /><span class="flex-1 truncate">Dashboard</span>
+         </RouterLink>
+-        <div v-for="g in groups" :key="g.key" class="mt-3">
+-          <button
+-            class="w-full flex items-center gap-1 h-6 px-2.5 text-[10.5px] font-semibold uppercase tracking-[0.06em] text-subtle hover:text-muted rounded"
+-            :class="groupActive(g) && !isOpen(g) ? 'text-brand' : ''"
+-            :aria-expanded="isOpen(g)"
+-            data-no-loading
+-            @click="toggleGroup(g)"
+-          >
+-            <span class="flex-1 text-left">{{ g.label }}</span>
+-            <span v-if="groupActive(g) && !isOpen(g)" class="size-1.5 rounded-full bg-brand mr-1" aria-hidden="true" />
+-            <ChevronDown class="size-3 transition-transform duration-300 ease-out" :class="isOpen(g) ? '' : '-rotate-90'" />
+-          </button>
+-          <div class="grid transition-[grid-template-rows] duration-300 ease-[cubic-bezier(.2,.8,.2,1)]" :style="{ gridTemplateRows: isOpen(g) ? '1fr' : '0fr' }">
+-            <div class="overflow-hidden space-y-0.5 pt-0.5 transition-opacity duration-300" :class="isOpen(g) ? 'opacity-100' : 'opacity-0'">
+-              <RouterLink
+-                v-for="item in g.items"
+-                :key="item.to"
+-                :to="item.to"
+-                class="flex items-center gap-2.5 h-8 px-2.5 rounded-md text-[13px] transition-[background-color,color,transform] duration-150 active:scale-[0.98]"
+-                :class="isActive(item.to) ? 'bg-brand-soft text-brand font-medium' : 'text-muted hover:bg-surface-2 hover:text-ink'"
+-                :tabindex="isOpen(g) ? 0 : -1"
+-                @click="mobileOpen = false"
+-              >
+-                <component :is="item.icon" class="size-4 shrink-0" />
+-                <span class="flex-1 truncate">{{ item.label }}</span>
+-                <span v-if="item.phase" class="text-[10px] text-subtle">P{{ item.phase }}</span>
+-              </RouterLink>
+-            </div>
++        <div v-for="g in groups" :key="g.key" class="mt-4">
++          <div class="h-6 px-2.5 flex items-center text-[11px] text-subtle">{{ g.label }}</div>
++          <div class="space-y-0.5">
++            <RouterLink v-for="item in g.items" :key="item.to" :to="item.to" :class="itemClass(item.to)" @click="mobileOpen = false">
++              <component :is="item.icon" class="size-4 shrink-0" />
++              <span class="flex-1 truncate">{{ item.label }}</span>
++              <span v-if="item.phase" class="text-[10px] text-subtle">P{{ item.phase }}</span>
++            </RouterLink>
+           </div>
+         </div>
++        <!-- AI Team: only the title. Its pages are hidden until they are ready. -->
++        <button
++          class="mt-4 w-full h-8 px-2.5 flex items-center gap-2 rounded-md text-[11px] text-subtle hover:bg-surface-2 hover:text-muted transition-colors"
++          title="Under construction — do not use"
++          data-no-loading
++          @click="aiTeamOpen = true"
++        >
++          <span class="flex-1 text-left">AI Team</span>
++          <span class="inline-flex items-center gap-1 h-4 px-1.5 rounded bg-[#3a2a0c] text-[#f2b84b] text-[10px] font-medium"><Construction class="size-3" />Soon</span>
++        </button>
+       </nav>
+       <div class="p-3 border-t border-line">
+         <div class="flex items-center gap-2.5">
+-          <div class="size-8 rounded-full bg-moss-soft text-moss grid place-items-center text-[12px] font-semibold">{{ initials }}</div>
++          <div class="size-8 rounded-full bg-[var(--wb-nav-active)] text-[var(--wb-nav-accent)] grid place-items-center text-[12px] font-semibold">{{ initials }}</div>
+           <div class="min-w-0 flex-1">
+             <div class="text-[13px] font-medium truncate">{{ auth.profile?.name }}</div>
+             <div class="text-[11px] text-subtle truncate">{{ roleLabels[auth.profile?.role ?? ''] }}<template v-if="auth.profile?.department"> · {{ auth.profile.department }}</template></div>
+@@ -208,6 +145,10 @@ async function logout() {
+         </div>
+       </div>
+     </aside>
++    <Modal v-if="aiTeamOpen" title="AI Team" width="860px" @close="aiTeamOpen = false">
++      <UnderConstruction />
++      <template #footer><button class="btn-primary" data-no-loading @click="aiTeamOpen = false">Got it</button></template>
++    </Modal>
+     <div v-if="mobileOpen" class="fixed inset-0 z-30 bg-black/30 lg:hidden" @click="mobileOpen = false" />
+ 
+     <!-- Main -->
+@@ -221,7 +162,8 @@ async function logout() {
+         <!-- Pages slide in gently. Keyed by the page (not its id), so switching Assistant chats doesn't reload the page. -->
+         <RouterView v-slot="{ Component, route: r }">
+           <Transition name="page" mode="out-in">
+-            <component :is="Component" :key="r.matched[r.matched.length - 1]?.path" />
++            <div v-if="r.meta.underConstruction" :key="'uc-' + r.path" class="max-w-4xl mx-auto p-6"><div class="card p-5 overflow-hidden"><UnderConstruction /></div></div>
++            <component :is="Component" v-else :key="r.matched[r.matched.length - 1]?.path" />
+           </Transition>
+         </RouterView>
+       </main>
+diff --git a/apps/web/src/lib/ai-team-preview.ts b/apps/web/src/lib/ai-team-preview.ts
+new file mode 100644
+index 0000000..ababe2e
+--- /dev/null
++++ b/apps/web/src/lib/ai-team-preview.ts
+@@ -0,0 +1,13 @@
++import { BookOpen, CalendarClock, ListTodo, Network, ShieldCheck, Sparkles, TrendingUp } from '@lucide/vue';
++import type { Component } from 'vue';
++
++/** AI Team pages that are planned but not open yet. Shown in the "Under construction" pop-up. */
++export const aiTeamUpcoming: { title: string; text: string; icon: Component }[] = [
++  { title: 'AI Staff', text: 'AI employees for each department that you can chat with and give work to.', icon: Sparkles },
++  { title: 'AI Tasks', text: 'Hand jobs to your AI staff and follow their progress.', icon: ListTodo },
++  { title: 'AI Schedules', text: 'Let AI staff run routine jobs on a timetable.', icon: CalendarClock },
++  { title: 'Approvals', text: 'Check and approve what the AI wants to do before it happens.', icon: ShieldCheck },
++  { title: 'Collaboration', text: 'See how AI staff pass work to each other.', icon: Network },
++  { title: 'Company Knowledge', text: 'Documents and house rules the AI staff learn from.', icon: BookOpen },
++  { title: 'AI Performance', text: 'How well each AI employee is doing over time.', icon: TrendingUp },
++];
+diff --git a/apps/web/src/lib/icons.ts b/apps/web/src/lib/icons.ts
+index 2c09ab1..221d2b0 100644
+--- a/apps/web/src/lib/icons.ts
++++ b/apps/web/src/lib/icons.ts
+@@ -61,10 +61,10 @@ export const iconFor = (name: string): Component => map[name] ?? Box;
+ 
+ /** Accent per node category, used for the icon tile. */
+ export const categoryStyle: Record<string, string> = {
+-  trigger: 'bg-brand-soft text-brand',
++  trigger: 'bg-ok-soft text-ok',
+   logic: 'bg-warn-soft text-warn',
+   data: 'bg-info-soft text-info',
+-  communication: 'bg-moss-soft text-moss',
++  communication: 'bg-[#dff3f1] text-[#0f766e] dark:bg-[#0e2a2c] dark:text-[#5fd0c6]',
+   ai: 'bg-[#efe8f5] text-[#6c4a8f] dark:bg-[#2a2233] dark:text-[#b99ad6]',
+ };
+ 
+diff --git a/apps/web/src/router.ts b/apps/web/src/router.ts
+index 5bb98da..4dbc6b5 100644
+--- a/apps/web/src/router.ts
++++ b/apps/web/src/router.ts
+@@ -7,6 +7,8 @@ declare module 'vue-router' {
+     public?: boolean;
+     permission?: Permission;
+     title?: string;
++    /** Page is shown in the menu but blocked with an "Under construction" screen. */
++    underConstruction?: boolean;
+   }
+ }
+ 
+@@ -21,7 +23,7 @@ export const router = createRouter({
+       path: '/',
+       component: () => import('@/layouts/AppLayout.vue'),
+       children: [
+-        { path: '', component: () => import('@/views/OverviewView.vue'), meta: { title: 'Overview' } },
++        { path: '', component: () => import('@/views/OverviewView.vue'), meta: { title: 'Dashboard' } },
+         { path: 'workflows', component: () => import('@/views/WorkflowsView.vue'), meta: { title: 'Workflows' } },
+         { path: 'executions', component: () => import('@/views/ExecutionsView.vue'), meta: { title: 'Executions' } },
+         { path: 'executions/:id', component: () => import('@/views/ExecutionDetailView.vue'), meta: { title: 'Execution' } },
+@@ -29,16 +31,16 @@ export const router = createRouter({
+         { path: 'integrations', component: () => import('@/views/IntegrationsView.vue'), meta: { title: 'Integrations' } },
+         { path: 'ai-agents', component: () => import('@/views/AiView.vue'), meta: { title: 'AI Settings' } },
+         // AI Staff (the Widebed Assistant is one of them; old /assistant links still work)
+-        { path: 'ai-staff', component: () => import('@/views/AiStaffView.vue'), meta: { title: 'AI Staff' } },
+-        { path: 'ai-staff/new', component: () => import('@/views/AgentEditView.vue'), meta: { title: 'New AI employee', permission: 'agent.manage' } },
+-        { path: 'ai-staff/:id/edit', component: () => import('@/views/AgentEditView.vue'), meta: { title: 'Edit AI employee' } },
+-        { path: 'ai-tasks', component: () => import('@/views/AiTasksView.vue'), meta: { title: 'AI Tasks' } },
+-        { path: 'ai-collaboration', component: () => import('@/views/AiCollaborationView.vue'), meta: { title: 'Collaboration' } },
+-        { path: 'ai-performance', component: () => import('@/views/AiPerformanceView.vue'), meta: { title: 'AI Performance' } },
+-        { path: 'knowledge', component: () => import('@/views/KnowledgeView.vue'), meta: { title: 'Company Knowledge' } },
+-        { path: 'ai-approvals', component: () => import('@/views/AiApprovalsView.vue'), meta: { title: 'Approvals' } },
+-        { path: 'ai-schedules', component: () => import('@/views/AiSchedulesView.vue'), meta: { title: 'AI Schedules' } },
+-        { path: 'ai-staff/:agentId/chat/:chatId?', component: () => import('@/views/AgentChatView.vue'), meta: { title: 'AI Staff' } },
++        { path: 'ai-staff', component: () => import('@/views/AiStaffView.vue'), meta: { underConstruction: true, title: 'AI Staff' } },
++        { path: 'ai-staff/new', component: () => import('@/views/AgentEditView.vue'), meta: { underConstruction: true, title: 'New AI employee', permission: 'agent.manage' } },
++        { path: 'ai-staff/:id/edit', component: () => import('@/views/AgentEditView.vue'), meta: { underConstruction: true, title: 'Edit AI employee' } },
++        { path: 'ai-tasks', component: () => import('@/views/AiTasksView.vue'), meta: { underConstruction: true, title: 'AI Tasks' } },
++        { path: 'ai-collaboration', component: () => import('@/views/AiCollaborationView.vue'), meta: { underConstruction: true, title: 'Collaboration' } },
++        { path: 'ai-performance', component: () => import('@/views/AiPerformanceView.vue'), meta: { underConstruction: true, title: 'AI Performance' } },
++        { path: 'knowledge', component: () => import('@/views/KnowledgeView.vue'), meta: { underConstruction: true, title: 'Company Knowledge' } },
++        { path: 'ai-approvals', component: () => import('@/views/AiApprovalsView.vue'), meta: { underConstruction: true, title: 'Approvals' } },
++        { path: 'ai-schedules', component: () => import('@/views/AiSchedulesView.vue'), meta: { underConstruction: true, title: 'AI Schedules' } },
++        { path: 'ai-staff/:agentId/chat/:chatId?', component: () => import('@/views/AgentChatView.vue'), meta: { underConstruction: true, title: 'AI Staff' } },
+         { path: 'assistant/:id?', redirect: (to) => `/ai-staff/widebed-assistant/chat${typeof to.params.id === 'string' && to.params.id ? `/${to.params.id}` : ''}` },
+         { path: 'credentials', component: () => import('@/views/CredentialsView.vue'), meta: { title: 'Credentials' } },
+         { path: 'schedules', component: () => import('@/views/SchedulesView.vue'), meta: { title: 'Schedules' } },
+diff --git a/apps/web/src/style.css b/apps/web/src/style.css
+index d7b031a..66b1901 100644
+--- a/apps/web/src/style.css
++++ b/apps/web/src/style.css
+@@ -41,70 +41,102 @@
+   --color-info-soft: var(--wb-info-soft);
+ 
+   --radius-card: 10px;
+-  --shadow-card: 0 1px 2px rgb(30 28 20 / 0.04);
+-  --shadow-pop: 0 8px 24px rgb(30 28 20 / 0.12);
++  --shadow-card: 0 1px 2px rgb(15 23 42 / 0.05);
++  --shadow-pop: 0 8px 24px rgb(15 23 42 / 0.14);
+ }
+ 
+ :root {
+-  --wb-canvas: #f6f4ef;
++  /* Navy console — light: grey-blue canvas, white cards, blue accent */
++  --wb-canvas: #f3f5f9;
+   --wb-surface: #ffffff;
+-  --wb-surface-2: #faf9f6;
+-  --wb-line: #e8e4da;
+-  --wb-line-strong: #d6d0c2;
+-  --wb-ink: #1d211d;
+-  --wb-muted: #5f665e;
+-  --wb-subtle: #8c918a;
+-
+-  --wb-brand: #1f5e3b;
+-  --wb-brand-hover: #184b2f;
+-  --wb-brand-soft: #e6efe8;
++  --wb-surface-2: #f6f8fb;
++  --wb-line: #e2e7ef;
++  --wb-line-strong: #cbd3df;
++  --wb-ink: #0f172a;
++  --wb-muted: #4f5d73;
++  --wb-subtle: #8693a7;
++
++  --wb-brand: #1e40af;
++  --wb-brand-hover: #1a3794;
++  --wb-brand-soft: #e5ecfb;
+   --wb-brand-ink: #ffffff;
+-  --wb-moss: #7d8f4e;
+-  --wb-moss-soft: #eef1e2;
+-
+-  --wb-ok: #2f7d4f;
+-  --wb-ok-soft: #e5f2ea;
+-  --wb-bad: #b4372f;
+-  --wb-bad-soft: #f9e7e5;
+-  --wb-warn: #a06a12;
+-  --wb-warn-soft: #f8eedb;
+-  --wb-info: #2d6190;
+-  --wb-info-soft: #e5eef7;
+-
+-  --wb-grid: #dcd7cb;
++  --wb-moss: #3554c4;
++  --wb-moss-soft: #e6ebfa;
++
++  --wb-ok: #15803d;
++  --wb-ok-soft: #dcf5e4;
++  --wb-bad: #b91c1c;
++  --wb-bad-soft: #fde4e4;
++  --wb-warn: #b45309;
++  --wb-warn-soft: #fdf1cf;
++  --wb-info: #1d4ed8;
++  --wb-info-soft: #e2eafc;
++
++  --wb-grid: #d3dae6;
++
++  /* Sidebar: always navy */
++  --wb-nav-bg: #0f1a33;
++  --wb-nav-line: #1d2a49;
++  --wb-nav-hover: #172446;
++  --wb-nav-active: #1f2f5c;
++  --wb-nav-accent: #5b8def;
++  --wb-nav-ink: #f1f5fb;
++  --wb-nav-muted: #b3bfd6;
++  --wb-nav-subtle: #6f7f9e;
+   color-scheme: light;
+ }
+ 
+ .dark {
+-  --wb-canvas: #121412;
+-  --wb-surface: #1a1d1a;
+-  --wb-surface-2: #161916;
+-  --wb-line: #2a2f2a;
+-  --wb-line-strong: #384038;
+-  --wb-ink: #e9ece7;
+-  --wb-muted: #a3aaa1;
+-  --wb-subtle: #757d74;
+-
+-  --wb-brand: #4f9a6c;
+-  --wb-brand-hover: #5daa79;
+-  --wb-brand-soft: #1e2d23;
+-  --wb-brand-ink: #0d140f;
+-  --wb-moss: #a7b77a;
+-  --wb-moss-soft: #262b1d;
+-
+-  --wb-ok: #5fb583;
+-  --wb-ok-soft: #1b2b21;
+-  --wb-bad: #e2786f;
+-  --wb-bad-soft: #33201e;
+-  --wb-warn: #d9a54a;
+-  --wb-warn-soft: #30281a;
+-  --wb-info: #79a9d6;
+-  --wb-info-soft: #1b2733;
+-
+-  --wb-grid: #2b302b;
++  /* Navy console — dark */
++  --wb-canvas: #0a1222;
++  --wb-surface: #0f1a2e;
++  --wb-surface-2: #13213a;
++  --wb-line: #1e2e4c;
++  --wb-line-strong: #2b4167;
++  --wb-ink: #e4ebf7;
++  --wb-muted: #a0b0cb;
++  --wb-subtle: #6a7fa2;
++
++  --wb-brand: #4c8dff;
++  --wb-brand-hover: #6aa0ff;
++  --wb-brand-soft: #162a4d;
++  --wb-brand-ink: #06101f;
++  --wb-moss: #8fb2ff;
++  --wb-moss-soft: #1a2c4f;
++
++  --wb-ok: #4cc38a;
++  --wb-ok-soft: #10301f;
++  --wb-bad: #f07c74;
++  --wb-bad-soft: #3a1c1f;
++  --wb-warn: #e5b04f;
++  --wb-warn-soft: #33270f;
++  --wb-info: #7fb0ff;
++  --wb-info-soft: #14284a;
++
++  --wb-grid: #1c2b47;
++
++  --wb-nav-bg: #08101f;
++  --wb-nav-line: #17233d;
++  --wb-nav-hover: #111d36;
++  --wb-nav-active: #18294f;
+   color-scheme: dark;
+ }
+ 
++/* The navy sidebar: re-points the shared tokens so buttons and text inside it read on navy. */
++.wb-nav {
++  --wb-surface: var(--wb-nav-bg);
++  --wb-surface-2: var(--wb-nav-hover);
++  --wb-line: var(--wb-nav-line);
++  --wb-line-strong: var(--wb-nav-line);
++  --wb-ink: var(--wb-nav-ink);
++  --wb-muted: var(--wb-nav-muted);
++  --wb-subtle: var(--wb-nav-subtle);
++  --wb-brand-soft: var(--wb-nav-active);
++  color-scheme: dark;
++  background: var(--wb-nav-bg);
++  color: var(--wb-nav-ink);
++}
++
+ html,
+ body,
+ #app {
+@@ -347,8 +379,9 @@ button svg {
+ .vue-flow__node.selected > .wb-node {
+   @apply ring-2 ring-brand/40 border-brand;
+ }
+-.vue-flow__selection {
+-  background: rgb(31 94 59 / 0.06);
++.vue-flow__selection,
++.vue-flow__nodesselection-rect {
++  background: color-mix(in srgb, var(--wb-brand) 8%, transparent);
+   border-color: var(--wb-brand);
+ }
+ 
+@@ -414,3 +447,16 @@ button svg {
+ .list-enter-from { opacity: 0; transform: translateX(-8px); }
+ .list-leave-to { opacity: 0; transform: translateX(8px); }
+ .list-leave-active { position: absolute; }
++
++/* ===================================================== Editor: canvas toolbar */
++.wb-tool {
++  @apply size-8 grid place-items-center rounded-md text-muted transition-[background-color,color] duration-150 disabled:opacity-40 disabled:cursor-not-allowed;
++}
++.wb-tool:not(:disabled):hover { @apply bg-surface-2 text-ink; }
++.wb-tool[aria-pressed='true'] { @apply bg-brand text-brand-ink; }
++.wb-tool.wb-tool-danger:not(:disabled):hover { @apply bg-bad-soft text-bad; }
++.wb-canvas-pan .vue-flow__pane, .wb-canvas-pan .vue-flow__node { cursor: grab; }
++.wb-canvas-pan .vue-flow__pane.dragging { cursor: grabbing; }
++.wb-canvas-box .vue-flow__pane { cursor: crosshair; }
++.wb-canvas-connect .vue-flow__node { cursor: copy; }
++.wb-node.wb-connect-source { @apply ring-2 ring-brand border-brand; }
+diff --git a/apps/web/src/views/WorkflowEditorView.vue b/apps/web/src/views/WorkflowEditorView.vue
+index 3c2fe24..08402b3 100644
+--- a/apps/web/src/views/WorkflowEditorView.vue
++++ b/apps/web/src/views/WorkflowEditorView.vue
+@@ -8,8 +8,10 @@ import { Background } from '@vue-flow/background';
+ import { Controls } from '@vue-flow/controls';
+ import { MiniMap } from '@vue-flow/minimap';
+ import {
+-  AlertTriangle, ArrowLeft, Check, Copy, Download, GitCompare, History, Loader2, Play, Redo2, Rocket, Save, Settings2, Undo2, X,
++  AlertTriangle, ArrowLeft, Check, Copy, CopyPlus, Download, GitCompare, Hand, History, Loader2, Maximize, MousePointer2, Network, Play, Plus,
++  Redo2, Rocket, Save, Settings2, Spline, SquareDashedMousePointer, Trash2, Undo2, X,
+ } from '@lucide/vue';
++import { resolveOutputs, type HandleDescriptor } from '@widebed/shared';
+ import type {
+   Execution, ExecutionStep, NodeDescriptor, ValidationIssue, Workflow, WorkflowDefinition, WorkflowVersion,
+ } from '@widebed/shared';
+@@ -36,8 +38,8 @@ const router = useRouter();
+ const store = useNodeTypesStore();
+ const flowId = 'wb-editor';
+ const {
+-  nodes, edges, addNodes, addEdges, removeNodes, setNodes, setEdges, updateNodeData, findNode,
+-  screenToFlowCoordinate, fitView, onConnect, vueFlowRef,
++  nodes, edges, addNodes, addEdges, removeNodes, removeEdges, setNodes, setEdges, updateNodeData, findNode,
++  screenToFlowCoordinate, fitView, onConnect, vueFlowRef, getSelectedNodes, getSelectedEdges, removeSelectedNodes,
+ } = useVueFlow(flowId);
+ 
+ const wf = ref<WorkflowWithPerms | null>(null);
+@@ -282,23 +284,128 @@ function commitSoon() {
+   commitTimer = window.setTimeout(commit, 350);
+ }
+ 
++/** Deletes the selected nodes and lines (or the node open in the side panel). */
+ function deleteSelected() {
+-  if (!selectedId.value) return;
+-  removeNodes([selectedId.value], true);
++  if (!canEdit.value) return;
++  const nodeIds = new Set(getSelectedNodes.value.map((n) => n.id));
++  if (selectedId.value) nodeIds.add(selectedId.value);
++  const edgeIds = getSelectedEdges.value.map((e) => e.id);
++  if (!nodeIds.size && !edgeIds.length) return toast('Select a node or a line first.', 'info', 2000);
++  if (edgeIds.length) removeEdges(edgeIds);
++  if (nodeIds.size) removeNodes([...nodeIds], true);
+   selectedId.value = null;
+   nextTick(commit);
+ }
+ 
++/** Duplicates the selected nodes (triggers are skipped: one of each per workflow). */
+ function duplicateSelected() {
+-  const n = selectedNode.value;
+-  if (!n) return;
+-  const d = store.get(n.data.nodeType);
+-  if (d?.isTrigger) return toast('A workflow can only have one trigger of each type.', 'info');
+-  const id = newId('node');
+-  addNodes([{ id, type: 'wb', position: { x: n.position.x + 40, y: n.position.y + 60 }, data: { ...clone({ ...n.data, exec: undefined, issues: undefined }), name: uniqueName(n.data.name) } }]);
+-  selectedId.value = id;
++  if (!canEdit.value) return;
++  const picked = getSelectedNodes.value.length ? getSelectedNodes.value : selectedNode.value ? [selectedNode.value] : [];
++  if (!picked.length) return toast('Select a node first.', 'info', 2000);
++  const copies = picked.filter((n) => !store.get((n.data as WbNodeData).nodeType)?.isTrigger);
++  if (!copies.length) return toast('A workflow can only have one trigger of each type.', 'info');
++  const added = copies.map((n) => {
++    const data = n.data as WbNodeData;
++    const id = newId('node');
++    addNodes([{ id, type: 'wb', position: { x: n.position.x + 40, y: n.position.y + 60 }, data: { ...clone({ ...data, exec: undefined, issues: undefined }), name: uniqueName(data.name) } }]);
++    return id;
++  });
++  removeSelectedNodes(getSelectedNodes.value);
++  selectedId.value = added.length === 1 ? added[0] : null;
++  nextTick(commit);
++}
++
++/* ---------------- canvas toolbar ---------------- */
++
++type Tool = 'select' | 'pan' | 'box' | 'connect';
++const tool = ref<Tool>('select');
++const palette = ref<InstanceType<typeof NodePalette> | null>(null);
++/** Draw-line tool: the node the line starts from, and which of its outputs. */
++const connectFrom = ref<{ nodeId: string; outputs: HandleDescriptor[]; handle: string | null } | null>(null);
++
++function setTool(t: Tool) {
++  if (!canEdit.value && t !== 'select' && t !== 'pan') return;
++  tool.value = t;
++  connectFrom.value = null;
++}
++const toolHint = computed(() => {
++  switch (tool.value) {
++    case 'pan': return 'Drag anywhere to move around the canvas';
++    case 'box': return 'Drag a box to select several nodes';
++    case 'connect':
++      if (!connectFrom.value) return 'Click the node the line starts from';
++      if (!connectFrom.value.handle) return 'Choose which output to connect';
++      return `Now click the node to connect ${nodeName(connectFrom.value.nodeId)} to`;
++    default: return '';
++  }
++});
++
++function outputsOf(nodeId: string): HandleDescriptor[] {
++  const data = findNode<WbNodeData>(nodeId)?.data;
++  const d = data ? store.get(data.nodeType) : undefined;
++  return d && data ? resolveOutputs(d, data.config) : [{ id: 'main' }];
++}
++
++function onNodeClick(nodeId: string) {
++  if (tool.value !== 'connect') {
++    selectedId.value = nodeId;
++    return;
++  }
++  const from = connectFrom.value;
++  if (!from || from.nodeId === nodeId) {
++    const outs = outputsOf(nodeId);
++    if (!outs.length) return toast('This node has no outputs to connect from.', 'info', 2000);
++    connectFrom.value = from?.nodeId === nodeId ? null : { nodeId, outputs: outs, handle: outs.length === 1 ? outs[0].id : null };
++    return;
++  }
++  if (!from.handle) return toast('Choose which output to connect first.', 'info', 2000);
++  const target = findNode<WbNodeData>(nodeId);
++  const inputs = target ? store.get(target.data.nodeType)?.inputs ?? [] : [];
++  if (!inputs.length) return toast(`${nodeName(nodeId)} is a trigger — nothing can connect into it.`, 'info');
++  const c = { source: from.nodeId, sourceHandle: from.handle, target: nodeId, targetHandle: inputs[0].id };
++  if (!isValidConnection(c as Connection)) return toast('Those nodes are already connected.', 'info', 2000);
++  addEdges([{ ...c, id: newId('edge'), ...edgeStyle }]);
++  connectFrom.value = null;
+   nextTick(commit);
+ }
++function onPaneClick() {
++  selectedId.value = null;
++  connectFrom.value = null;
++}
++
++/** Lays nodes out left to right by how many steps they are from the start. */
++function autoArrange() {
++  if (!canEdit.value || !nodes.value.length) return;
++  const incoming = new Map<string, string[]>();
++  for (const e of edges.value) incoming.set(e.target, [...(incoming.get(e.target) ?? []), e.source]);
++  const depth = new Map<string, number>();
++  const visiting = new Set<string>();
++  const depthOf = (id: string): number => {
++    if (depth.has(id)) return depth.get(id)!;
++    if (visiting.has(id)) return 0; // loop: stop here
++    visiting.add(id);
++    const d = Math.max(-1, ...(incoming.get(id) ?? []).map(depthOf)) + 1;
++    visiting.delete(id);
++    depth.set(id, d);
++    return d;
++  };
++  const columns = new Map<number, typeof nodes.value>();
++  for (const n of [...nodes.value].sort((a, b) => a.position.y - b.position.y)) {
++    const d = depthOf(n.id);
++    columns.set(d, [...(columns.get(d) ?? []), n]);
++  }
++  const tallest = Math.max(...[...columns.values()].map((c) => c.length));
++  for (const [col, list] of columns) {
++    const offset = ((tallest - list.length) * 120) / 2;
++    list.forEach((n, row) => (n.position = { x: col * 290, y: offset + row * 120 }));
++  }
++  nextTick(() => {
++    fitView({ padding: 0.3, maxZoom: 1, duration: 300 });
++    commit();
++  });
++}
++const fitToScreen = () => fitView({ padding: 0.3, maxZoom: 1, duration: 300 });
++const focusAdd = () => palette.value?.focusSearch();
+ 
+ /* ---------------- load / save / publish ---------------- */
+ 
+@@ -554,6 +661,23 @@ function onKey(e: KeyboardEvent) {
+   } else if (!typing && mod && e.key.toLowerCase() === 'y') {
+     e.preventDefault();
+     redo();
++  } else if (!typing && mod && e.key.toLowerCase() === 'd') {
++    e.preventDefault();
++    duplicateSelected();
++  } else if (!typing && !mod && !e.altKey) {
++    const k = e.key.toLowerCase();
++    if (e.key === 'Escape') setTool('select');
++    else if (e.shiftKey && k === 'a') autoArrange();
++    else if (e.shiftKey && (e.key === '1' || e.key === '!')) fitToScreen();
++    else if (e.shiftKey) return;
++    else if (k === 'v') setTool('select');
++    else if (k === 'h') setTool('pan');
++    else if (k === 'b') setTool('box');
++    else if (k === 'l') setTool('connect');
++    else if (k === 'n' && canEdit.value) {
++      e.preventDefault();
++      focusAdd();
++    }
+   }
+ }
+ const beforeUnload = (e: BeforeUnloadEvent) => {
+@@ -614,11 +738,6 @@ const copy = (text: string) => navigator.clipboard.writeText(text).then(() => to
+             </button>
+           </div>
+         </div>
+-        <template v-if="canEdit">
+-          <button class="btn-ghost btn-icon" title="Undo (Ctrl+Z)" :disabled="!past.length" @click="undo"><Undo2 class="size-4" /></button>
+-          <button class="btn-ghost btn-icon" title="Redo (Ctrl+Shift+Z)" :disabled="!future.length" @click="redo"><Redo2 class="size-4" /></button>
+-          <div class="w-px h-5 bg-line mx-1" />
+-        </template>
+         <button v-if="canEdit" class="btn-ghost btn-icon" title="Workflow settings" @click="openSettings"><Settings2 class="size-4" /></button>
+         <button class="btn-ghost btn-icon" title="Export as .json (saves first)" @click="exportFile"><Download class="size-4" /></button>
+         <button class="btn-ghost h-8" title="Versions" @click="openVersions"><History class="size-4" /><span class="hidden lg:inline">Versions</span></button>
+@@ -647,14 +766,17 @@ const copy = (text: string) => navigator.clipboard.writeText(text).then(() => to
+     <div v-if="loadError" class="flex-1 grid place-items-center text-[13px] text-bad">{{ loadError }}</div>
+ 
+     <div v-else class="flex-1 min-h-0 flex">
+-      <NodePalette v-if="canEdit" @add="addNode($event)" />
++      <NodePalette v-if="canEdit" ref="palette" @add="addNode($event)" />
+ 
+       <div class="flex-1 min-w-0 flex flex-col">
+-        <div class="flex-1 min-h-0 relative" @drop.prevent="onDrop" @dragover.prevent>
++        <div class="flex-1 min-h-0 relative" :class="`wb-canvas-${tool}`" @drop.prevent="onDrop" @dragover.prevent>
+           <VueFlow
+             :id="flowId"
+             :default-edge-options="edgeStyle"
+-            :nodes-draggable="canEdit"
++            :nodes-draggable="canEdit && tool !== 'pan'"
++            :elements-selectable="tool !== 'pan'"
++            :pan-on-drag="tool !== 'box'"
++            :selection-key-code="tool === 'box' ? true : 'Shift'"
+             :nodes-connectable="canEdit"
+             :edges-updatable="false"
+             :delete-key-code="canEdit ? ['Backspace', 'Delete'] : null"
+@@ -665,14 +787,14 @@ const copy = (text: string) => navigator.clipboard.writeText(text).then(() => to
+             :snap-grid="[10, 10]"
+             :default-viewport="{ x: 80, y: 80, zoom: 1 }"
+             class="h-full"
+-            @node-click="({ node }) => (selectedId = node.id)"
+-            @pane-click="selectedId = null"
++            @node-click="({ node }) => onNodeClick(node.id)"
++            @pane-click="onPaneClick"
+             @node-drag-stop="commit"
+             @nodes-change="onNodesChange"
+             @edges-change="onEdgesChange"
+           >
+             <template #node-wb="props">
+-              <WorkflowNode v-bind="props" />
++              <WorkflowNode v-bind="props" :class="{ 'wb-connect-source': connectFrom?.nodeId === props.id }" />
+             </template>
+             <Background pattern-color="var(--wb-grid)" :gap="20" :size="1.2" />
+             <Controls :show-interactive="false" position="bottom-left" />
+@@ -685,9 +807,37 @@ const copy = (text: string) => navigator.clipboard.writeText(text).then(() => to
+               <p class="text-[13px] text-muted mt-1">Drag a trigger (e.g. <b>Schedule Trigger</b>) from the left onto the canvas — or click <b>Guide</b> (top right) for help.</p>
+             </div>
+           </div>
+-          <!-- Guide: top-right corner of the canvas, below the toolbar -->
++          <!-- Canvas toolbar -->
++          <div v-if="wf" class="absolute top-3 left-1/2 -translate-x-1/2 z-10 flex flex-col items-center gap-2">
++            <div role="toolbar" aria-label="Canvas tools" class="flex items-center gap-0.5 p-1 card shadow-[var(--shadow-pop)]">
++              <button class="wb-tool" :aria-pressed="tool === 'select'" title="Select (V)" data-no-loading @click="setTool('select')"><MousePointer2 class="size-4" /></button>
++              <button class="wb-tool" :aria-pressed="tool === 'pan'" title="Pan — drag to move around (H)" data-no-loading @click="setTool('pan')"><Hand class="size-4" /></button>
++              <template v-if="canEdit">
++                <button class="wb-tool" :aria-pressed="tool === 'box'" title="Box select — drag to select several (B)" data-no-loading @click="setTool('box')"><SquareDashedMousePointer class="size-4" /></button>
++                <button class="wb-tool" :aria-pressed="tool === 'connect'" title="Draw line — click two nodes to connect them (L)" data-no-loading @click="setTool('connect')"><Spline class="size-4" /></button>
++                <div class="w-px h-5 bg-line mx-1" />
++                <button class="wb-tool" title="Add node (N)" data-no-loading @click="focusAdd"><Plus class="size-4" /></button>
++                <button class="wb-tool" title="Duplicate selected (Ctrl+D)" data-no-loading @click="duplicateSelected"><CopyPlus class="size-4" /></button>
++                <button class="wb-tool wb-tool-danger" title="Delete selected (Delete)" data-no-loading @click="deleteSelected"><Trash2 class="size-4" /></button>
++                <div class="w-px h-5 bg-line mx-1" />
++                <button class="wb-tool" title="Undo (Ctrl+Z)" :disabled="!past.length" data-no-loading @click="undo"><Undo2 class="size-4" /></button>
++                <button class="wb-tool" title="Redo (Ctrl+Shift+Z)" :disabled="!future.length" data-no-loading @click="redo"><Redo2 class="size-4" /></button>
++                <div class="w-px h-5 bg-line mx-1" />
++                <button class="wb-tool" title="Auto-arrange (Shift+A)" :disabled="!nodes.length" data-no-loading @click="autoArrange"><Network class="size-4 -rotate-90" /></button>
++              </template>
++              <button class="wb-tool" title="Fit to screen (Shift+1)" :disabled="!nodes.length" data-no-loading @click="fitToScreen"><Maximize class="size-4" /></button>
++            </div>
++            <div v-if="toolHint" class="chip h-7 px-3 text-[12px] bg-surface shadow-[var(--shadow-card)] animate-pop">
++              {{ toolHint }}
++              <template v-if="connectFrom && !connectFrom.handle">
++                <button v-for="o in connectFrom.outputs" :key="o.id" class="btn-secondary h-5 px-2 text-[11px] ml-1" data-no-loading @click="connectFrom.handle = o.id">{{ o.label ?? o.id }}</button>
++              </template>
++              <button class="ml-1 text-subtle hover:text-ink" aria-label="Back to select (Esc)" title="Back to select (Esc)" data-no-loading @click="setTool('select')"><X class="size-3.5" /></button>
++            </div>
++          </div>
++          <!-- Guide: top-right corner of the canvas -->
+           <div class="absolute top-3 right-3 z-10 shadow-sm rounded-full"><GuideButton guide="editor" /></div>
+-          <div v-if="wf && !canEdit" class="absolute top-3 left-1/2 -translate-x-1/2 chip h-7 px-3 text-[12px]">View only — you can run this workflow but not edit it</div>
++          <div v-if="wf && !canEdit" class="absolute top-16 left-1/2 -translate-x-1/2 chip h-7 px-3 text-[12px]">View only — you can run this workflow but not edit it</div>
+           <button v-if="!showExecPanel && execution" class="absolute bottom-3 left-1/2 -translate-x-1/2 btn-secondary shadow-[var(--shadow-pop)]" @click="showExecPanel = true">
+             <StatusBadge :status="execution.status" />Show execution
+           </button>

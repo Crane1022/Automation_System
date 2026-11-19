@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue';
+import { computed, ref } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import {
   Activity,
@@ -13,22 +13,18 @@ import {
   Moon,
   Plug,
   Settings,
-  Sparkles,
   Sun,
   Users,
   Workflow,
   History,
-  ListTodo,
-  ShieldCheck,
-  Network,
-  BookOpen,
-  TrendingUp,
-  ChevronDown,
+  Construction,
 } from '@lucide/vue';
 import { useAuthStore } from '@/stores/auth';
 import { useTheme } from '@/lib/theme';
 import { roleLabels } from '@/lib/format';
 import NotificationBell from '@/components/NotificationBell.vue';
+import UnderConstruction from '@/components/ui/UnderConstruction.vue';
+import Modal from '@/components/ui/Modal.vue';
 import { stopNotifications } from '@/lib/notifications';
 
 const auth = useAuthStore();
@@ -36,27 +32,14 @@ const route = useRoute();
 const router = useRouter();
 const { isDark, toggle } = useTheme();
 const mobileOpen = ref(false);
+const aiTeamOpen = ref(false);
 
 interface NavItem { to: string; label: string; icon: unknown; phase?: number }
 interface NavGroup { key: string; label: string; items: NavItem[] }
 
-/** The menu, grouped so it stays short. Groups fold open/closed; the one you are in is always open. */
+/** The menu, grouped by area. Every group is always shown. */
 const groups = computed<NavGroup[]>(() =>
   [
-    // AI Team - HIDDEN
-    // {
-    //   key: 'ai',
-    //   label: 'AI Team',
-    //   items: [
-    //     { to: '/ai-staff', label: 'AI Staff', icon: Sparkles },
-    //     { to: '/ai-tasks', label: 'AI Tasks', icon: ListTodo },
-    //     { to: '/ai-schedules', label: 'AI Schedules', icon: CalendarClock },
-    //     { to: '/ai-approvals', label: 'Approvals', icon: ShieldCheck },
-    //     { to: '/ai-collaboration', label: 'Collaboration', icon: Network },
-    //     { to: '/knowledge', label: 'Company Knowledge', icon: BookOpen },
-    //     ...(auth.can('agent.manage') || auth.can('audit.view') || auth.profile?.role === 'department_manager' ? [{ to: '/ai-performance', label: 'AI Performance', icon: TrendingUp }] : []),
-    //   ],
-    // },
     {
       key: 'automation',
       label: 'Automation',
@@ -88,46 +71,14 @@ const groups = computed<NavGroup[]>(() =>
   ].filter((g) => g.items.length),
 );
 
-/**
- * Accordion: one group open at a time. Opening a group closes the others; clicking the open
- * group closes it. Moving to a page opens that page's group. Remembered in this browser.
- */
-const OPEN_KEY = 'wb.nav.open';
-const openKey = ref<string | null>((() => {
-  try {
-    return localStorage.getItem(OPEN_KEY);
-  } catch {
-    return null;
-  }
-})());
-const groupActive = (g: NavGroup) => g.items.some((i) => isActive(i.to));
-const isOpen = (g: NavGroup) => openKey.value === g.key;
-function remember() {
-  try {
-    if (openKey.value) localStorage.setItem(OPEN_KEY, openKey.value);
-    else localStorage.removeItem(OPEN_KEY);
-  } catch {
-    /* private mode: just don't remember */
-  }
-}
-function toggleGroup(g: NavGroup) {
-  openKey.value = openKey.value === g.key ? null : g.key;
-  remember();
-}
-
 const isActive = (to: string) => (to === '/' ? route.path === '/' : route.path.startsWith(to));
-/** Moving to a page opens that page's group (runs after isActive exists). */
-watch(
-  () => route.path,
-  () => {
-    const g = groups.value.find(groupActive);
-    if (g && openKey.value !== g.key) {
-      openKey.value = g.key;
-      remember();
-    }
-  },
-  { immediate: true },
-);
+/** Active item: lighter navy with a blue bar on the left. */
+const itemClass = (to: string) => [
+  'relative flex items-center gap-2.5 h-8 px-2.5 rounded-md text-[13px] transition-[background-color,color,transform] duration-150 active:scale-[0.98]',
+  isActive(to)
+    ? 'bg-[var(--wb-nav-active)] text-[var(--wb-nav-ink)] font-medium before:absolute before:left-0 before:inset-y-1 before:w-[3px] before:rounded-full before:bg-[var(--wb-nav-accent)]'
+    : 'text-muted hover:bg-surface-2 hover:text-ink',
+];
 const initials = computed(() =>
   (auth.profile?.name ?? '?').split(/\s+/).map((p) => p[0]).slice(0, 2).join('').toUpperCase(),
 );
@@ -143,60 +94,46 @@ async function logout() {
   <div class="h-full flex">
     <!-- Sidebar -->
     <aside
-      class="fixed inset-y-0 left-0 z-40 w-[232px] bg-surface border-r border-line flex flex-col transition-transform lg:static lg:translate-x-0"
+      class="wb-nav fixed inset-y-0 left-0 z-40 w-[232px] border-r border-line flex flex-col transition-transform lg:static lg:translate-x-0"
       :class="mobileOpen ? 'translate-x-0' : '-translate-x-full'"
     >
       <div class="h-14 flex items-center gap-2.5 px-4 border-b border-line">
         <img src="/favicon.svg" alt="" class="size-7" />
         <div class="leading-tight flex-1">
-          <div class="text-[13px] font-semibold">Widebed</div>
+          <div class="text-[13.5px] font-semibold">Widebed</div>
           <div class="text-[11px] text-subtle">Automation</div>
         </div>
         <NotificationBell class="hidden lg:block" placement="sidebar" />
       </div>
       <nav class="flex-1 overflow-y-auto p-2">
-        <RouterLink
-          to="/"
-          class="flex items-center gap-2.5 h-8 px-2.5 rounded-md text-[13px] transition-[background-color,color,transform] duration-150 active:scale-[0.98]"
-          :class="isActive('/') ? 'bg-brand-soft text-brand font-medium' : 'text-muted hover:bg-surface-2 hover:text-ink'"
-          @click="mobileOpen = false"
-        >
-          <LayoutDashboard class="size-4 shrink-0" /><span class="flex-1 truncate">Overview</span>
+        <div class="h-6 px-2.5 flex items-center text-[11px] text-subtle">Overview</div>
+        <RouterLink to="/" :class="itemClass('/')" @click="mobileOpen = false">
+          <LayoutDashboard class="size-4 shrink-0" /><span class="flex-1 truncate">Dashboard</span>
         </RouterLink>
-        <div v-for="g in groups" :key="g.key" class="mt-3">
-          <button
-            class="w-full flex items-center gap-1 h-6 px-2.5 text-[10.5px] font-semibold uppercase tracking-[0.06em] text-subtle hover:text-muted rounded"
-            :class="groupActive(g) && !isOpen(g) ? 'text-brand' : ''"
-            :aria-expanded="isOpen(g)"
-            data-no-loading
-            @click="toggleGroup(g)"
-          >
-            <span class="flex-1 text-left">{{ g.label }}</span>
-            <span v-if="groupActive(g) && !isOpen(g)" class="size-1.5 rounded-full bg-brand mr-1" aria-hidden="true" />
-            <ChevronDown class="size-3 transition-transform duration-300 ease-out" :class="isOpen(g) ? '' : '-rotate-90'" />
-          </button>
-          <div class="grid transition-[grid-template-rows] duration-300 ease-[cubic-bezier(.2,.8,.2,1)]" :style="{ gridTemplateRows: isOpen(g) ? '1fr' : '0fr' }">
-            <div class="overflow-hidden space-y-0.5 pt-0.5 transition-opacity duration-300" :class="isOpen(g) ? 'opacity-100' : 'opacity-0'">
-              <RouterLink
-                v-for="item in g.items"
-                :key="item.to"
-                :to="item.to"
-                class="flex items-center gap-2.5 h-8 px-2.5 rounded-md text-[13px] transition-[background-color,color,transform] duration-150 active:scale-[0.98]"
-                :class="isActive(item.to) ? 'bg-brand-soft text-brand font-medium' : 'text-muted hover:bg-surface-2 hover:text-ink'"
-                :tabindex="isOpen(g) ? 0 : -1"
-                @click="mobileOpen = false"
-              >
-                <component :is="item.icon" class="size-4 shrink-0" />
-                <span class="flex-1 truncate">{{ item.label }}</span>
-                <span v-if="item.phase" class="text-[10px] text-subtle">P{{ item.phase }}</span>
-              </RouterLink>
-            </div>
+        <div v-for="g in groups" :key="g.key" class="mt-4">
+          <div class="h-6 px-2.5 flex items-center text-[11px] text-subtle">{{ g.label }}</div>
+          <div class="space-y-0.5">
+            <RouterLink v-for="item in g.items" :key="item.to" :to="item.to" :class="itemClass(item.to)" @click="mobileOpen = false">
+              <component :is="item.icon" class="size-4 shrink-0" />
+              <span class="flex-1 truncate">{{ item.label }}</span>
+              <span v-if="item.phase" class="text-[10px] text-subtle">P{{ item.phase }}</span>
+            </RouterLink>
           </div>
         </div>
+        <!-- AI Team: only the title. Its pages are hidden until they are ready. -->
+        <button
+          class="mt-4 w-full h-8 px-2.5 flex items-center gap-2 rounded-md text-[11px] text-subtle hover:bg-surface-2 hover:text-muted transition-colors"
+          title="Under construction — do not use"
+          data-no-loading
+          @click="aiTeamOpen = true"
+        >
+          <span class="flex-1 text-left">AI Team</span>
+          <span class="inline-flex items-center gap-1 h-4 px-1.5 rounded bg-[#3a2a0c] text-[#f2b84b] text-[10px] font-medium"><Construction class="size-3" />Soon</span>
+        </button>
       </nav>
       <div class="p-3 border-t border-line">
         <div class="flex items-center gap-2.5">
-          <div class="size-8 rounded-full bg-moss-soft text-moss grid place-items-center text-[12px] font-semibold">{{ initials }}</div>
+          <div class="size-8 rounded-full bg-[var(--wb-nav-active)] text-[var(--wb-nav-accent)] grid place-items-center text-[12px] font-semibold">{{ initials }}</div>
           <div class="min-w-0 flex-1">
             <div class="text-[13px] font-medium truncate">{{ auth.profile?.name }}</div>
             <div class="text-[11px] text-subtle truncate">{{ roleLabels[auth.profile?.role ?? ''] }}<template v-if="auth.profile?.department"> · {{ auth.profile.department }}</template></div>
@@ -208,6 +145,10 @@ async function logout() {
         </div>
       </div>
     </aside>
+    <Modal v-if="aiTeamOpen" title="AI Team" width="860px" @close="aiTeamOpen = false">
+      <UnderConstruction />
+      <template #footer><button class="btn-primary" data-no-loading @click="aiTeamOpen = false">Got it</button></template>
+    </Modal>
     <div v-if="mobileOpen" class="fixed inset-0 z-30 bg-black/30 lg:hidden" @click="mobileOpen = false" />
 
     <!-- Main -->
@@ -221,7 +162,8 @@ async function logout() {
         <!-- Pages slide in gently. Keyed by the page (not its id), so switching Assistant chats doesn't reload the page. -->
         <RouterView v-slot="{ Component, route: r }">
           <Transition name="page" mode="out-in">
-            <component :is="Component" :key="r.matched[r.matched.length - 1]?.path" />
+            <div v-if="r.meta.underConstruction" :key="'uc-' + r.path" class="max-w-4xl mx-auto p-6"><div class="card p-5 overflow-hidden"><UnderConstruction /></div></div>
+            <component :is="Component" v-else :key="r.matched[r.matched.length - 1]?.path" />
           </Transition>
         </RouterView>
       </main>

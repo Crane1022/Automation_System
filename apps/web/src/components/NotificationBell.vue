@@ -40,6 +40,8 @@ const TONE = { 'task.completed': 'text-ok', 'task.failed': 'text-bad', 'issue.ne
         <span v-if="unread" class="absolute -top-0.5 -right-0.5 min-w-4 h-4 px-1 rounded-full bg-bad text-white text-[10px] font-semibold grid place-items-center tabular-nums">{{ unread > 9 ? '9+' : unread }}</span>
       </Transition>
     </button>
+    <!-- Teleported so the popover keeps the page colours, not the navy sidebar's -->
+    <Teleport to="body">
     <Transition name="pop">
       <div
         v-if="open"
@@ -70,6 +72,7 @@ const TONE = { 'task.completed': 'text-ok', 'task.failed': 'text-bad', 'issue.ne
         </ul>
       </div>
     </Transition>
+    </Teleport>
   </div>
 </template>
 

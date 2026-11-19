@@ -41,68 +41,100 @@
   --color-info-soft: var(--wb-info-soft);
 
   --radius-card: 10px;
-  --shadow-card: 0 1px 2px rgb(30 28 20 / 0.04);
-  --shadow-pop: 0 8px 24px rgb(30 28 20 / 0.12);
+  --shadow-card: 0 1px 2px rgb(15 23 42 / 0.05);
+  --shadow-pop: 0 8px 24px rgb(15 23 42 / 0.14);
 }
 
 :root {
-  --wb-canvas: #f6f4ef;
+  /* Navy console — light: grey-blue canvas, white cards, blue accent */
+  --wb-canvas: #f3f5f9;
   --wb-surface: #ffffff;
-  --wb-surface-2: #faf9f6;
-  --wb-line: #e8e4da;
-  --wb-line-strong: #d6d0c2;
-  --wb-ink: #1d211d;
-  --wb-muted: #5f665e;
-  --wb-subtle: #8c918a;
+  --wb-surface-2: #f6f8fb;
+  --wb-line: #e2e7ef;
+  --wb-line-strong: #cbd3df;
+  --wb-ink: #0f172a;
+  --wb-muted: #4f5d73;
+  --wb-subtle: #8693a7;
 
-  --wb-brand: #1f5e3b;
-  --wb-brand-hover: #184b2f;
-  --wb-brand-soft: #e6efe8;
+  --wb-brand: #1e40af;
+  --wb-brand-hover: #1a3794;
+  --wb-brand-soft: #e5ecfb;
   --wb-brand-ink: #ffffff;
-  --wb-moss: #7d8f4e;
-  --wb-moss-soft: #eef1e2;
+  --wb-moss: #3554c4;
+  --wb-moss-soft: #e6ebfa;
 
-  --wb-ok: #2f7d4f;
-  --wb-ok-soft: #e5f2ea;
-  --wb-bad: #b4372f;
-  --wb-bad-soft: #f9e7e5;
-  --wb-warn: #a06a12;
-  --wb-warn-soft: #f8eedb;
-  --wb-info: #2d6190;
-  --wb-info-soft: #e5eef7;
+  --wb-ok: #15803d;
+  --wb-ok-soft: #dcf5e4;
+  --wb-bad: #b91c1c;
+  --wb-bad-soft: #fde4e4;
+  --wb-warn: #b45309;
+  --wb-warn-soft: #fdf1cf;
+  --wb-info: #1d4ed8;
+  --wb-info-soft: #e2eafc;
 
-  --wb-grid: #dcd7cb;
+  --wb-grid: #d3dae6;
+
+  /* Sidebar: always navy */
+  --wb-nav-bg: #0f1a33;
+  --wb-nav-line: #1d2a49;
+  --wb-nav-hover: #172446;
+  --wb-nav-active: #1f2f5c;
+  --wb-nav-accent: #5b8def;
+  --wb-nav-ink: #f1f5fb;
+  --wb-nav-muted: #b3bfd6;
+  --wb-nav-subtle: #6f7f9e;
   color-scheme: light;
 }
 
 .dark {
-  --wb-canvas: #121412;
-  --wb-surface: #1a1d1a;
-  --wb-surface-2: #161916;
-  --wb-line: #2a2f2a;
-  --wb-line-strong: #384038;
-  --wb-ink: #e9ece7;
-  --wb-muted: #a3aaa1;
-  --wb-subtle: #757d74;
+  /* Navy console — dark */
+  --wb-canvas: #0a1222;
+  --wb-surface: #0f1a2e;
+  --wb-surface-2: #13213a;
+  --wb-line: #1e2e4c;
+  --wb-line-strong: #2b4167;
+  --wb-ink: #e4ebf7;
+  --wb-muted: #a0b0cb;
+  --wb-subtle: #6a7fa2;
 
-  --wb-brand: #4f9a6c;
-  --wb-brand-hover: #5daa79;
-  --wb-brand-soft: #1e2d23;
-  --wb-brand-ink: #0d140f;
-  --wb-moss: #a7b77a;
-  --wb-moss-soft: #262b1d;
+  --wb-brand: #4c8dff;
+  --wb-brand-hover: #6aa0ff;
+  --wb-brand-soft: #162a4d;
+  --wb-brand-ink: #06101f;
+  --wb-moss: #8fb2ff;
+  --wb-moss-soft: #1a2c4f;
 
-  --wb-ok: #5fb583;
-  --wb-ok-soft: #1b2b21;
-  --wb-bad: #e2786f;
-  --wb-bad-soft: #33201e;
-  --wb-warn: #d9a54a;
-  --wb-warn-soft: #30281a;
-  --wb-info: #79a9d6;
-  --wb-info-soft: #1b2733;
+  --wb-ok: #4cc38a;
+  --wb-ok-soft: #10301f;
+  --wb-bad: #f07c74;
+  --wb-bad-soft: #3a1c1f;
+  --wb-warn: #e5b04f;
+  --wb-warn-soft: #33270f;
+  --wb-info: #7fb0ff;
+  --wb-info-soft: #14284a;
 
-  --wb-grid: #2b302b;
+  --wb-grid: #1c2b47;
+
+  --wb-nav-bg: #08101f;
+  --wb-nav-line: #17233d;
+  --wb-nav-hover: #111d36;
+  --wb-nav-active: #18294f;
   color-scheme: dark;
+}
+
+/* The navy sidebar: re-points the shared tokens so buttons and text inside it read on navy. */
+.wb-nav {
+  --wb-surface: var(--wb-nav-bg);
+  --wb-surface-2: var(--wb-nav-hover);
+  --wb-line: var(--wb-nav-line);
+  --wb-line-strong: var(--wb-nav-line);
+  --wb-ink: var(--wb-nav-ink);
+  --wb-muted: var(--wb-nav-muted);
+  --wb-subtle: var(--wb-nav-subtle);
+  --wb-brand-soft: var(--wb-nav-active);
+  color-scheme: dark;
+  background: var(--wb-nav-bg);
+  color: var(--wb-nav-ink);
 }
 
 html,
@@ -347,8 +379,9 @@ button svg {
 .vue-flow__node.selected > .wb-node {
   @apply ring-2 ring-brand/40 border-brand;
 }
-.vue-flow__selection {
-  background: rgb(31 94 59 / 0.06);
+.vue-flow__selection,
+.vue-flow__nodesselection-rect {
+  background: color-mix(in srgb, var(--wb-brand) 8%, transparent);
   border-color: var(--wb-brand);
 }
 
@@ -414,3 +447,16 @@ button svg {
 .list-enter-from { opacity: 0; transform: translateX(-8px); }
 .list-leave-to { opacity: 0; transform: translateX(8px); }
 .list-leave-active { position: absolute; }
+
+/* ===================================================== Editor: canvas toolbar */
+.wb-tool {
+  @apply size-8 grid place-items-center rounded-md text-muted transition-[background-color,color] duration-150 disabled:opacity-40 disabled:cursor-not-allowed;
+}
+.wb-tool:not(:disabled):hover { @apply bg-surface-2 text-ink; }
+.wb-tool[aria-pressed='true'] { @apply bg-brand text-brand-ink; }
+.wb-tool.wb-tool-danger:not(:disabled):hover { @apply bg-bad-soft text-bad; }
+.wb-canvas-pan .vue-flow__pane, .wb-canvas-pan .vue-flow__node { cursor: grab; }
+.wb-canvas-pan .vue-flow__pane.dragging { cursor: grabbing; }
+.wb-canvas-box .vue-flow__pane { cursor: crosshair; }
+.wb-canvas-connect .vue-flow__node { cursor: copy; }
+.wb-node.wb-connect-source { @apply ring-2 ring-brand border-brand; }

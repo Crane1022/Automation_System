@@ -8,8 +8,10 @@ import { Background } from '@vue-flow/background';
 import { Controls } from '@vue-flow/controls';
 import { MiniMap } from '@vue-flow/minimap';
 import {
-  AlertTriangle, ArrowLeft, Check, Copy, Download, GitCompare, History, Loader2, Play, Redo2, Rocket, Save, Settings2, Undo2, X,
+  AlertTriangle, ArrowLeft, Check, Copy, CopyPlus, Download, GitCompare, Hand, History, Loader2, Maximize, MousePointer2, Network, Play, Plus,
+  Redo2, Rocket, Save, Settings2, Spline, SquareDashedMousePointer, Trash2, Undo2, X,
 } from '@lucide/vue';
+import { resolveOutputs, type HandleDescriptor } from '@widebed/shared';
 import type {
   Execution, ExecutionStep, NodeDescriptor, ValidationIssue, Workflow, WorkflowDefinition, WorkflowVersion,
 } from '@widebed/shared';
@@ -36,8 +38,8 @@ const router = useRouter();
 const store = useNodeTypesStore();
 const flowId = 'wb-editor';
 const {
-  nodes, edges, addNodes, addEdges, removeNodes, setNodes, setEdges, updateNodeData, findNode,
-  screenToFlowCoordinate, fitView, onConnect, vueFlowRef,
+  nodes, edges, addNodes, addEdges, removeNodes, removeEdges, setNodes, setEdges, updateNodeData, findNode,
+  screenToFlowCoordinate, fitView, onConnect, vueFlowRef, getSelectedNodes, getSelectedEdges, removeSelectedNodes,
 } = useVueFlow(flowId);
 
 const wf = ref<WorkflowWithPerms | null>(null);
@@ -282,23 +284,128 @@ function commitSoon() {
   commitTimer = window.setTimeout(commit, 350);
 }
 
+/** Deletes the selected nodes and lines (or the node open in the side panel). */
 function deleteSelected() {
-  if (!selectedId.value) return;
-  removeNodes([selectedId.value], true);
+  if (!canEdit.value) return;
+  const nodeIds = new Set(getSelectedNodes.value.map((n) => n.id));
+  if (selectedId.value) nodeIds.add(selectedId.value);
+  const edgeIds = getSelectedEdges.value.map((e) => e.id);
+  if (!nodeIds.size && !edgeIds.length) return toast('Select a node or a line first.', 'info', 2000);
+  if (edgeIds.length) removeEdges(edgeIds);
+  if (nodeIds.size) removeNodes([...nodeIds], true);
   selectedId.value = null;
   nextTick(commit);
 }
 
+/** Duplicates the selected nodes (triggers are skipped: one of each per workflow). */
 function duplicateSelected() {
-  const n = selectedNode.value;
-  if (!n) return;
-  const d = store.get(n.data.nodeType);
-  if (d?.isTrigger) return toast('A workflow can only have one trigger of each type.', 'info');
-  const id = newId('node');
-  addNodes([{ id, type: 'wb', position: { x: n.position.x + 40, y: n.position.y + 60 }, data: { ...clone({ ...n.data, exec: undefined, issues: undefined }), name: uniqueName(n.data.name) } }]);
-  selectedId.value = id;
+  if (!canEdit.value) return;
+  const picked = getSelectedNodes.value.length ? getSelectedNodes.value : selectedNode.value ? [selectedNode.value] : [];
+  if (!picked.length) return toast('Select a node first.', 'info', 2000);
+  const copies = picked.filter((n) => !store.get((n.data as WbNodeData).nodeType)?.isTrigger);
+  if (!copies.length) return toast('A workflow can only have one trigger of each type.', 'info');
+  const added = copies.map((n) => {
+    const data = n.data as WbNodeData;
+    const id = newId('node');
+    addNodes([{ id, type: 'wb', position: { x: n.position.x + 40, y: n.position.y + 60 }, data: { ...clone({ ...data, exec: undefined, issues: undefined }), name: uniqueName(data.name) } }]);
+    return id;
+  });
+  removeSelectedNodes(getSelectedNodes.value);
+  selectedId.value = added.length === 1 ? added[0] : null;
   nextTick(commit);
 }
+
+/* ---------------- canvas toolbar ---------------- */
+
+type Tool = 'select' | 'pan' | 'box' | 'connect';
+const tool = ref<Tool>('select');
+const palette = ref<InstanceType<typeof NodePalette> | null>(null);
+/** Draw-line tool: the node the line starts from, and which of its outputs. */
+const connectFrom = ref<{ nodeId: string; outputs: HandleDescriptor[]; handle: string | null } | null>(null);
+
+function setTool(t: Tool) {
+  if (!canEdit.value && t !== 'select' && t !== 'pan') return;
+  tool.value = t;
+  connectFrom.value = null;
+}
+const toolHint = computed(() => {
+  switch (tool.value) {
+    case 'pan': return 'Drag anywhere to move around the canvas';
+    case 'box': return 'Drag a box to select several nodes';
+    case 'connect':
+      if (!connectFrom.value) return 'Click the node the line starts from';
+      if (!connectFrom.value.handle) return 'Choose which output to connect';
+      return `Now click the node to connect ${nodeName(connectFrom.value.nodeId)} to`;
+    default: return '';
+  }
+});
+
+function outputsOf(nodeId: string): HandleDescriptor[] {
+  const data = findNode<WbNodeData>(nodeId)?.data;
+  const d = data ? store.get(data.nodeType) : undefined;
+  return d && data ? resolveOutputs(d, data.config) : [{ id: 'main' }];
+}
+
+function onNodeClick(nodeId: string) {
+  if (tool.value !== 'connect') {
+    selectedId.value = nodeId;
+    return;
+  }
+  const from = connectFrom.value;
+  if (!from || from.nodeId === nodeId) {
+    const outs = outputsOf(nodeId);
+    if (!outs.length) return toast('This node has no outputs to connect from.', 'info', 2000);
+    connectFrom.value = from?.nodeId === nodeId ? null : { nodeId, outputs: outs, handle: outs.length === 1 ? outs[0].id : null };
+    return;
+  }
+  if (!from.handle) return toast('Choose which output to connect first.', 'info', 2000);
+  const target = findNode<WbNodeData>(nodeId);
+  const inputs = target ? store.get(target.data.nodeType)?.inputs ?? [] : [];
+  if (!inputs.length) return toast(`${nodeName(nodeId)} is a trigger — nothing can connect into it.`, 'info');
+  const c = { source: from.nodeId, sourceHandle: from.handle, target: nodeId, targetHandle: inputs[0].id };
+  if (!isValidConnection(c as Connection)) return toast('Those nodes are already connected.', 'info', 2000);
+  addEdges([{ ...c, id: newId('edge'), ...edgeStyle }]);
+  connectFrom.value = null;
+  nextTick(commit);
+}
+function onPaneClick() {
+  selectedId.value = null;
+  connectFrom.value = null;
+}
+
+/** Lays nodes out left to right by how many steps they are from the start. */
+function autoArrange() {
+  if (!canEdit.value || !nodes.value.length) return;
+  const incoming = new Map<string, string[]>();
+  for (const e of edges.value) incoming.set(e.target, [...(incoming.get(e.target) ?? []), e.source]);
+  const depth = new Map<string, number>();
+  const visiting = new Set<string>();
+  const depthOf = (id: string): number => {
+    if (depth.has(id)) return depth.get(id)!;
+    if (visiting.has(id)) return 0; // loop: stop here
+    visiting.add(id);
+    const d = Math.max(-1, ...(incoming.get(id) ?? []).map(depthOf)) + 1;
+    visiting.delete(id);
+    depth.set(id, d);
+    return d;
+  };
+  const columns = new Map<number, typeof nodes.value>();
+  for (const n of [...nodes.value].sort((a, b) => a.position.y - b.position.y)) {
+    const d = depthOf(n.id);
+    columns.set(d, [...(columns.get(d) ?? []), n]);
+  }
+  const tallest = Math.max(...[...columns.values()].map((c) => c.length));
+  for (const [col, list] of columns) {
+    const offset = ((tallest - list.length) * 120) / 2;
+    list.forEach((n, row) => (n.position = { x: col * 290, y: offset + row * 120 }));
+  }
+  nextTick(() => {
+    fitView({ padding: 0.3, maxZoom: 1, duration: 300 });
+    commit();
+  });
+}
+const fitToScreen = () => fitView({ padding: 0.3, maxZoom: 1, duration: 300 });
+const focusAdd = () => palette.value?.focusSearch();
 
 /* ---------------- load / save / publish ---------------- */
 
@@ -554,6 +661,23 @@ function onKey(e: KeyboardEvent) {
   } else if (!typing && mod && e.key.toLowerCase() === 'y') {
     e.preventDefault();
     redo();
+  } else if (!typing && mod && e.key.toLowerCase() === 'd') {
+    e.preventDefault();
+    duplicateSelected();
+  } else if (!typing && !mod && !e.altKey) {
+    const k = e.key.toLowerCase();
+    if (e.key === 'Escape') setTool('select');
+    else if (e.shiftKey && k === 'a') autoArrange();
+    else if (e.shiftKey && (e.key === '1' || e.key === '!')) fitToScreen();
+    else if (e.shiftKey) return;
+    else if (k === 'v') setTool('select');
+    else if (k === 'h') setTool('pan');
+    else if (k === 'b') setTool('box');
+    else if (k === 'l') setTool('connect');
+    else if (k === 'n' && canEdit.value) {
+      e.preventDefault();
+      focusAdd();
+    }
   }
 }
 const beforeUnload = (e: BeforeUnloadEvent) => {
@@ -614,11 +738,6 @@ const copy = (text: string) => navigator.clipboard.writeText(text).then(() => to
             </button>
           </div>
         </div>
-        <template v-if="canEdit">
-          <button class="btn-ghost btn-icon" title="Undo (Ctrl+Z)" :disabled="!past.length" @click="undo"><Undo2 class="size-4" /></button>
-          <button class="btn-ghost btn-icon" title="Redo (Ctrl+Shift+Z)" :disabled="!future.length" @click="redo"><Redo2 class="size-4" /></button>
-          <div class="w-px h-5 bg-line mx-1" />
-        </template>
         <button v-if="canEdit" class="btn-ghost btn-icon" title="Workflow settings" @click="openSettings"><Settings2 class="size-4" /></button>
         <button class="btn-ghost btn-icon" title="Export as .json (saves first)" @click="exportFile"><Download class="size-4" /></button>
         <button class="btn-ghost h-8" title="Versions" @click="openVersions"><History class="size-4" /><span class="hidden lg:inline">Versions</span></button>
@@ -647,14 +766,17 @@ const copy = (text: string) => navigator.clipboard.writeText(text).then(() => to
     <div v-if="loadError" class="flex-1 grid place-items-center text-[13px] text-bad">{{ loadError }}</div>
 
     <div v-else class="flex-1 min-h-0 flex">
-      <NodePalette v-if="canEdit" @add="addNode($event)" />
+      <NodePalette v-if="canEdit" ref="palette" @add="addNode($event)" />
 
       <div class="flex-1 min-w-0 flex flex-col">
-        <div class="flex-1 min-h-0 relative" @drop.prevent="onDrop" @dragover.prevent>
+        <div class="flex-1 min-h-0 relative" :class="`wb-canvas-${tool}`" @drop.prevent="onDrop" @dragover.prevent>
           <VueFlow
             :id="flowId"
             :default-edge-options="edgeStyle"
-            :nodes-draggable="canEdit"
+            :nodes-draggable="canEdit && tool !== 'pan'"
+            :elements-selectable="tool !== 'pan'"
+            :pan-on-drag="tool !== 'box'"
+            :selection-key-code="tool === 'box' ? true : 'Shift'"
             :nodes-connectable="canEdit"
             :edges-updatable="false"
             :delete-key-code="canEdit ? ['Backspace', 'Delete'] : null"
@@ -665,14 +787,14 @@ const copy = (text: string) => navigator.clipboard.writeText(text).then(() => to
             :snap-grid="[10, 10]"
             :default-viewport="{ x: 80, y: 80, zoom: 1 }"
             class="h-full"
-            @node-click="({ node }) => (selectedId = node.id)"
-            @pane-click="selectedId = null"
+            @node-click="({ node }) => onNodeClick(node.id)"
+            @pane-click="onPaneClick"
             @node-drag-stop="commit"
             @nodes-change="onNodesChange"
             @edges-change="onEdgesChange"
           >
             <template #node-wb="props">
-              <WorkflowNode v-bind="props" />
+              <WorkflowNode v-bind="props" :class="{ 'wb-connect-source': connectFrom?.nodeId === props.id }" />
             </template>
             <Background pattern-color="var(--wb-grid)" :gap="20" :size="1.2" />
             <Controls :show-interactive="false" position="bottom-left" />
@@ -685,9 +807,37 @@ const copy = (text: string) => navigator.clipboard.writeText(text).then(() => to
               <p class="text-[13px] text-muted mt-1">Drag a trigger (e.g. <b>Schedule Trigger</b>) from the left onto the canvas — or click <b>Guide</b> (top right) for help.</p>
             </div>
           </div>
-          <!-- Guide: top-right corner of the canvas, below the toolbar -->
+          <!-- Canvas toolbar -->
+          <div v-if="wf" class="absolute top-3 left-1/2 -translate-x-1/2 z-10 flex flex-col items-center gap-2">
+            <div role="toolbar" aria-label="Canvas tools" class="flex items-center gap-0.5 p-1 card shadow-[var(--shadow-pop)]">
+              <button class="wb-tool" :aria-pressed="tool === 'select'" title="Select (V)" data-no-loading @click="setTool('select')"><MousePointer2 class="size-4" /></button>
+              <button class="wb-tool" :aria-pressed="tool === 'pan'" title="Pan — drag to move around (H)" data-no-loading @click="setTool('pan')"><Hand class="size-4" /></button>
+              <template v-if="canEdit">
+                <button class="wb-tool" :aria-pressed="tool === 'box'" title="Box select — drag to select several (B)" data-no-loading @click="setTool('box')"><SquareDashedMousePointer class="size-4" /></button>
+                <button class="wb-tool" :aria-pressed="tool === 'connect'" title="Draw line — click two nodes to connect them (L)" data-no-loading @click="setTool('connect')"><Spline class="size-4" /></button>
+                <div class="w-px h-5 bg-line mx-1" />
+                <button class="wb-tool" title="Add node (N)" data-no-loading @click="focusAdd"><Plus class="size-4" /></button>
+                <button class="wb-tool" title="Duplicate selected (Ctrl+D)" data-no-loading @click="duplicateSelected"><CopyPlus class="size-4" /></button>
+                <button class="wb-tool wb-tool-danger" title="Delete selected (Delete)" data-no-loading @click="deleteSelected"><Trash2 class="size-4" /></button>
+                <div class="w-px h-5 bg-line mx-1" />
+                <button class="wb-tool" title="Undo (Ctrl+Z)" :disabled="!past.length" data-no-loading @click="undo"><Undo2 class="size-4" /></button>
+                <button class="wb-tool" title="Redo (Ctrl+Shift+Z)" :disabled="!future.length" data-no-loading @click="redo"><Redo2 class="size-4" /></button>
+                <div class="w-px h-5 bg-line mx-1" />
+                <button class="wb-tool" title="Auto-arrange (Shift+A)" :disabled="!nodes.length" data-no-loading @click="autoArrange"><Network class="size-4 -rotate-90" /></button>
+              </template>
+              <button class="wb-tool" title="Fit to screen (Shift+1)" :disabled="!nodes.length" data-no-loading @click="fitToScreen"><Maximize class="size-4" /></button>
+            </div>
+            <div v-if="toolHint" class="chip h-7 px-3 text-[12px] bg-surface shadow-[var(--shadow-card)] animate-pop">
+              {{ toolHint }}
+              <template v-if="connectFrom && !connectFrom.handle">
+                <button v-for="o in connectFrom.outputs" :key="o.id" class="btn-secondary h-5 px-2 text-[11px] ml-1" data-no-loading @click="connectFrom.handle = o.id">{{ o.label ?? o.id }}</button>
+              </template>
+              <button class="ml-1 text-subtle hover:text-ink" aria-label="Back to select (Esc)" title="Back to select (Esc)" data-no-loading @click="setTool('select')"><X class="size-3.5" /></button>
+            </div>
+          </div>
+          <!-- Guide: top-right corner of the canvas -->
           <div class="absolute top-3 right-3 z-10 shadow-sm rounded-full"><GuideButton guide="editor" /></div>
-          <div v-if="wf && !canEdit" class="absolute top-3 left-1/2 -translate-x-1/2 chip h-7 px-3 text-[12px]">View only — you can run this workflow but not edit it</div>
+          <div v-if="wf && !canEdit" class="absolute top-16 left-1/2 -translate-x-1/2 chip h-7 px-3 text-[12px]">View only — you can run this workflow but not edit it</div>
           <button v-if="!showExecPanel && execution" class="absolute bottom-3 left-1/2 -translate-x-1/2 btn-secondary shadow-[var(--shadow-pop)]" @click="showExecPanel = true">
             <StatusBadge :status="execution.status" />Show execution
           </button>

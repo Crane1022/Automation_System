@@ -61,10 +61,10 @@ export const iconFor = (name: string): Component => map[name] ?? Box;
 
 /** Accent per node category, used for the icon tile. */
 export const categoryStyle: Record<string, string> = {
-  trigger: 'bg-brand-soft text-brand',
+  trigger: 'bg-ok-soft text-ok',
   logic: 'bg-warn-soft text-warn',
   data: 'bg-info-soft text-info',
-  communication: 'bg-moss-soft text-moss',
+  communication: 'bg-[#dff3f1] text-[#0f766e] dark:bg-[#0e2a2c] dark:text-[#5fd0c6]',
   ai: 'bg-[#efe8f5] text-[#6c4a8f] dark:bg-[#2a2233] dark:text-[#b99ad6]',
 };
 
