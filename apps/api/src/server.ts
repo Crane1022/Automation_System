@@ -5,7 +5,7 @@ import { createFirestoreRepositories } from './repositories/firestore.js';
 import { createFirebaseVerifier } from './auth/verifier.js';
 import { createFirebaseDirectory } from './auth/user-directory.js';
 import { buildContext, resyncSchedules, startProcessing } from './bootstrap.js';
-import { createApp } from './app.js';
+import { createApp } from './create-app.js';
 
 // Local development: read apps/api/.env automatically (works on Windows, macOS and Linux).
 // In Docker the variables come from docker-compose instead, so no file is needed.

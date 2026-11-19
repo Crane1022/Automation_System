@@ -4,7 +4,7 @@ import { createFirestoreRepositories } from './repositories/firestore.js';
 import { createFirebaseVerifier } from './auth/verifier.js';
 import { createFirebaseDirectory } from './auth/user-directory.js';
 import { buildContext, startProcessing } from './bootstrap.js';
-import { createApp } from './app.js';
+import { createApp } from './create-app.js';
 
 /**
  * Entry point for Vercel (see vercel.json → services.api).
