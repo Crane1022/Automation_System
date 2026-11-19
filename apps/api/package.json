@@ -3,11 +3,11 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "main": "dist/server.js",
+  "main": "dist/main.js",
   "scripts": {
-    "dev": "tsx watch src/server.ts",
+    "dev": "tsx watch src/main.ts",
     "build": "tsc -p tsconfig.json",
-    "start": "node dist/server.js",
+    "start": "node dist/main.js",
     "dev:worker": "tsx watch src/worker.ts",
     "start:worker": "node dist/worker.js",
     "build:vercel": "tsc -p tsconfig.json && esbuild dist/vercel.js --bundle --platform=node --target=node22 --format=cjs --outfile=vercel/index.js --external:bullmq --external:cors --external:cron-parser --external:express --external:firebase-admin --external:ioredis --external:zod --footer:js=\"module.exports = Object.assign(module.exports.default, { default: module.exports.default });\" --log-level=warning"

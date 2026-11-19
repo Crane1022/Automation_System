@@ -10,7 +10,7 @@ import { createApp } from './create-app.js';
  * Entry point for Vercel (see vercel.json → services.api).
  *
  * Vercel runs the API as functions: it imports this file and sends requests to the exported
- * Express app. There is no app.listen() and no long-lived process, so compared with server.ts:
+ * Express app. There is no app.listen() and no long-lived process, so compared with main.ts:
  *   - Environment variables come from the Vercel project settings (no .env file).
  *   - Firebase credentials must be in FIREBASE_SERVICE_ACCOUNT_BASE64 (there is no secret file).
  *   - The "interrupted execution" clean-up on startup is skipped: Vercel starts new copies of the

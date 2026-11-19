@@ -33,7 +33,7 @@ export interface BuildOptions {
 }
 
 /**
- * Wires all services together. Used by server.ts, worker.ts and the tests.
+ * Wires all services together. Used by main.ts, worker.ts and the tests.
  * With REDIS_URL: BullMQ queue + scheduler + Redis pub/sub.
  * Without: everything in this process (development / tests).
  */
