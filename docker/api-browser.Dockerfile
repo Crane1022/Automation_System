@@ -38,4 +38,4 @@ RUN npx playwright install --with-deps chromium && mkdir -p /app/assistant-files
 USER node
 EXPOSE 4000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s CMD node -e "fetch('http://127.0.0.1:4000/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
-CMD ["node", "apps/api/dist/main.js"]
+CMD ["node", "apps/api/dist/server.js"]

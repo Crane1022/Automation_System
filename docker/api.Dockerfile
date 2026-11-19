@@ -31,4 +31,4 @@ COPY --from=build /app/apps/api/dist apps/api/dist
 USER node
 EXPOSE 4000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s CMD wget -qO- http://127.0.0.1:4000/healthz || exit 1
-CMD ["node", "apps/api/dist/main.js"]
+CMD ["node", "apps/api/dist/server.js"]

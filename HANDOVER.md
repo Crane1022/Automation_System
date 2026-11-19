@@ -216,6 +216,7 @@ the canvas) that opens a pop-up. New pages must use `<PageHeader>` so they get i
 | AI Staff P8 | AI Performance page (tasks, success, time, tokens, cost from Admin prices), usage counting, security review, full test checklist | ✅ Built & tested (update-17) |
 | UI | Menu grouped into AI Team / Automation / Connections / Admin (foldable, remembered per browser) | ✅ update-18 |
 | Workflows | Tenant Reminder rebuilt on the PMS Firebase (docs/workflows); Firebase Read “Add to each incoming item as” lookups; Gmail sender name + pass-through | ✅ update-23 |
+| UI | Navy console theme (navy menu, cool grey page, deep blue actions, matching dark mode); menu groups always open; AI Team stays hidden | ✅ update-25 |
 | — | **Try with the real services** (list in §8 “NOT yet verified”) | ⏳ Crane |
 | — | **Go live** on a server — follow `docs/DEPLOYMENT.md` | ⏳ Not started |
 

@@ -34,7 +34,7 @@ const TONE = { 'task.completed': 'text-ok', 'task.failed': 'text-bad', 'issue.ne
 
 <template>
   <div ref="root" class="relative">
-    <button class="btn-ghost btn-icon relative" :aria-label="unread ? `${unread} new notifications` : 'Notifications'" data-no-loading @click.stop="toggle">
+    <button class="relative" :class="props.placement === 'sidebar' ? 'size-8 grid place-items-center rounded-md text-side-text hover:bg-side-hover hover:text-side-ink transition-colors' : 'btn-ghost btn-icon'" :aria-label="unread ? `${unread} new notifications` : 'Notifications'" data-no-loading @click.stop="toggle">
       <Bell class="size-4" :class="{ 'wb-ring': unread }" />
       <Transition name="pop">
         <span v-if="unread" class="absolute -top-0.5 -right-0.5 min-w-4 h-4 px-1 rounded-full bg-bad text-white text-[10px] font-semibold grid place-items-center tabular-nums">{{ unread > 9 ? '9+' : unread }}</span>

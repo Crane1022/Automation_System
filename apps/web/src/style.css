@@ -31,6 +31,15 @@
   --color-moss: var(--wb-moss);
   --color-moss-soft: var(--wb-moss-soft);
 
+  --color-side: var(--wb-side);
+  --color-side-line: var(--wb-side-line);
+  --color-side-ink: var(--wb-side-ink);
+  --color-side-text: var(--wb-side-text);
+  --color-side-subtle: var(--wb-side-subtle);
+  --color-side-hover: var(--wb-side-hover);
+  --color-side-active: var(--wb-side-active);
+  --color-side-accent: var(--wb-side-accent);
+
   --color-ok: var(--wb-ok);
   --color-ok-soft: var(--wb-ok-soft);
   --color-bad: var(--wb-bad);
@@ -41,67 +50,85 @@
   --color-info-soft: var(--wb-info-soft);
 
   --radius-card: 10px;
-  --shadow-card: 0 1px 2px rgb(30 28 20 / 0.04);
-  --shadow-pop: 0 8px 24px rgb(30 28 20 / 0.12);
+  --shadow-card: 0 1px 2px rgb(var(--wb-shadow) / 0.05);
+  --shadow-pop: 0 8px 24px rgb(var(--wb-shadow) / 0.14);
 }
 
 :root {
-  --wb-canvas: #f6f4ef;
+  /* Navy console theme: cool grey page, white cards, navy menu, deep blue actions. */
+  --wb-canvas: #f3f5f9;
   --wb-surface: #ffffff;
-  --wb-surface-2: #faf9f6;
-  --wb-line: #e8e4da;
-  --wb-line-strong: #d6d0c2;
-  --wb-ink: #1d211d;
-  --wb-muted: #5f665e;
-  --wb-subtle: #8c918a;
+  --wb-surface-2: #f8fafc;
+  --wb-line: #e2e7ef;
+  --wb-line-strong: #cbd3df;
+  --wb-ink: #111827;
+  --wb-muted: #4b5563;
+  --wb-subtle: #8a93a3;
 
-  --wb-brand: #1f5e3b;
-  --wb-brand-hover: #184b2f;
-  --wb-brand-soft: #e6efe8;
+  --wb-brand: #1e40af;
+  --wb-brand-hover: #1e3a8a;
+  --wb-brand-soft: #e6edfb;
   --wb-brand-ink: #ffffff;
-  --wb-moss: #7d8f4e;
-  --wb-moss-soft: #eef1e2;
+  --wb-moss: #475569;
+  --wb-moss-soft: #e8edf3;
 
-  --wb-ok: #2f7d4f;
-  --wb-ok-soft: #e5f2ea;
-  --wb-bad: #b4372f;
-  --wb-bad-soft: #f9e7e5;
-  --wb-warn: #a06a12;
-  --wb-warn-soft: #f8eedb;
-  --wb-info: #2d6190;
-  --wb-info-soft: #e5eef7;
+  --wb-ok: #15803d;
+  --wb-ok-soft: #e3f4e8;
+  --wb-bad: #b91c1c;
+  --wb-bad-soft: #fde8e8;
+  --wb-warn: #b45309;
+  --wb-warn-soft: #fdf1dc;
+  --wb-info: #0369a1;
+  --wb-info-soft: #e0f0fa;
 
-  --wb-grid: #dcd7cb;
+  /* The navy menu (same in light and dark mode, a little deeper in dark) */
+  --wb-side: #0f1b33;
+  --wb-side-line: #1c2a47;
+  --wb-side-ink: #ffffff;
+  --wb-side-text: #a9b4c9;
+  --wb-side-subtle: #6b7891;
+  --wb-side-hover: #17264a;
+  --wb-side-active: #1e3263;
+  --wb-side-accent: #8fb0ff;
+
+  --wb-shadow: 15 23 42;
+  --wb-grid: #d5dbe5;
   color-scheme: light;
 }
 
 .dark {
-  --wb-canvas: #121412;
-  --wb-surface: #1a1d1a;
-  --wb-surface-2: #161916;
-  --wb-line: #2a2f2a;
-  --wb-line-strong: #384038;
-  --wb-ink: #e9ece7;
-  --wb-muted: #a3aaa1;
-  --wb-subtle: #757d74;
+  --wb-canvas: #0b1220;
+  --wb-surface: #111a2b;
+  --wb-surface-2: #0e1625;
+  --wb-line: #1f2a3d;
+  --wb-line-strong: #2c3a52;
+  --wb-ink: #e6eaf2;
+  --wb-muted: #a3adbf;
+  --wb-subtle: #6f7a8e;
 
-  --wb-brand: #4f9a6c;
-  --wb-brand-hover: #5daa79;
-  --wb-brand-soft: #1e2d23;
-  --wb-brand-ink: #0d140f;
-  --wb-moss: #a7b77a;
-  --wb-moss-soft: #262b1d;
+  --wb-brand: #6d8ff0;
+  --wb-brand-hover: #86a3f5;
+  --wb-brand-soft: #18254a;
+  --wb-brand-ink: #0b1220;
+  --wb-moss: #94a3b8;
+  --wb-moss-soft: #1c2636;
 
-  --wb-ok: #5fb583;
-  --wb-ok-soft: #1b2b21;
-  --wb-bad: #e2786f;
-  --wb-bad-soft: #33201e;
-  --wb-warn: #d9a54a;
-  --wb-warn-soft: #30281a;
-  --wb-info: #79a9d6;
-  --wb-info-soft: #1b2733;
+  --wb-ok: #5fbf82;
+  --wb-ok-soft: #13261b;
+  --wb-bad: #f07a72;
+  --wb-bad-soft: #331a1c;
+  --wb-warn: #e0a64a;
+  --wb-warn-soft: #2e2414;
+  --wb-info: #6cb4e6;
+  --wb-info-soft: #132636;
 
-  --wb-grid: #2b302b;
+  --wb-side: #080e1a;
+  --wb-side-line: #162036;
+  --wb-side-hover: #121c30;
+  --wb-side-active: #1a2a4f;
+
+  --wb-shadow: 0 0 0;
+  --wb-grid: #1d2738;
   color-scheme: dark;
 }
 
@@ -348,7 +375,7 @@ button svg {
   @apply ring-2 ring-brand/40 border-brand;
 }
 .vue-flow__selection {
-  background: rgb(31 94 59 / 0.06);
+  background: color-mix(in srgb, var(--wb-brand) 6%, transparent);
   border-color: var(--wb-brand);
 }
 

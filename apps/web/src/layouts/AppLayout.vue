@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue';
+import { computed, ref } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import {
   Activity,
@@ -23,7 +23,6 @@ import {
   Network,
   BookOpen,
   TrendingUp,
-  ChevronDown,
 } from '@lucide/vue';
 import { useAuthStore } from '@/stores/auth';
 import { useTheme } from '@/lib/theme';
@@ -88,46 +87,7 @@ const groups = computed<NavGroup[]>(() =>
   ].filter((g) => g.items.length),
 );
 
-/**
- * Accordion: one group open at a time. Opening a group closes the others; clicking the open
- * group closes it. Moving to a page opens that page's group. Remembered in this browser.
- */
-const OPEN_KEY = 'wb.nav.open';
-const openKey = ref<string | null>((() => {
-  try {
-    return localStorage.getItem(OPEN_KEY);
-  } catch {
-    return null;
-  }
-})());
-const groupActive = (g: NavGroup) => g.items.some((i) => isActive(i.to));
-const isOpen = (g: NavGroup) => openKey.value === g.key;
-function remember() {
-  try {
-    if (openKey.value) localStorage.setItem(OPEN_KEY, openKey.value);
-    else localStorage.removeItem(OPEN_KEY);
-  } catch {
-    /* private mode: just don't remember */
-  }
-}
-function toggleGroup(g: NavGroup) {
-  openKey.value = openKey.value === g.key ? null : g.key;
-  remember();
-}
-
 const isActive = (to: string) => (to === '/' ? route.path === '/' : route.path.startsWith(to));
-/** Moving to a page opens that page's group (runs after isActive exists). */
-watch(
-  () => route.path,
-  () => {
-    const g = groups.value.find(groupActive);
-    if (g && openKey.value !== g.key) {
-      openKey.value = g.key;
-      remember();
-    }
-  },
-  { immediate: true },
-);
 const initials = computed(() =>
   (auth.profile?.name ?? '?').split(/\s+/).map((p) => p[0]).slice(0, 2).join('').toUpperCase(),
 );
@@ -143,14 +103,14 @@ async function logout() {
   <div class="h-full flex">
     <!-- Sidebar -->
     <aside
-      class="fixed inset-y-0 left-0 z-40 w-[232px] bg-surface border-r border-line flex flex-col transition-transform lg:static lg:translate-x-0"
+      class="fixed inset-y-0 left-0 z-40 w-[232px] bg-side text-side-text border-r border-side-line flex flex-col transition-transform lg:static lg:translate-x-0"
       :class="mobileOpen ? 'translate-x-0' : '-translate-x-full'"
     >
-      <div class="h-14 flex items-center gap-2.5 px-4 border-b border-line">
+      <div class="h-14 flex items-center gap-2.5 px-4 border-b border-side-line">
         <img src="/favicon.svg" alt="" class="size-7" />
         <div class="leading-tight flex-1">
-          <div class="text-[13px] font-semibold">Widebed</div>
-          <div class="text-[11px] text-subtle">Automation</div>
+          <div class="text-[13px] font-semibold text-side-ink">Widebed</div>
+          <div class="text-[11px] text-side-subtle">Automation</div>
         </div>
         <NotificationBell class="hidden lg:block" placement="sidebar" />
       </div>
@@ -158,53 +118,40 @@ async function logout() {
         <RouterLink
           to="/"
           class="flex items-center gap-2.5 h-8 px-2.5 rounded-md text-[13px] transition-[background-color,color,transform] duration-150 active:scale-[0.98]"
-          :class="isActive('/') ? 'bg-brand-soft text-brand font-medium' : 'text-muted hover:bg-surface-2 hover:text-ink'"
+          :class="isActive('/') ? 'bg-side-active text-side-ink font-medium' : 'text-side-text hover:bg-side-hover hover:text-side-ink'"
           @click="mobileOpen = false"
         >
           <LayoutDashboard class="size-4 shrink-0" /><span class="flex-1 truncate">Overview</span>
         </RouterLink>
-        <div v-for="g in groups" :key="g.key" class="mt-3">
-          <button
-            class="w-full flex items-center gap-1 h-6 px-2.5 text-[10.5px] font-semibold uppercase tracking-[0.06em] text-subtle hover:text-muted rounded"
-            :class="groupActive(g) && !isOpen(g) ? 'text-brand' : ''"
-            :aria-expanded="isOpen(g)"
-            data-no-loading
-            @click="toggleGroup(g)"
-          >
-            <span class="flex-1 text-left">{{ g.label }}</span>
-            <span v-if="groupActive(g) && !isOpen(g)" class="size-1.5 rounded-full bg-brand mr-1" aria-hidden="true" />
-            <ChevronDown class="size-3 transition-transform duration-300 ease-out" :class="isOpen(g) ? '' : '-rotate-90'" />
-          </button>
-          <div class="grid transition-[grid-template-rows] duration-300 ease-[cubic-bezier(.2,.8,.2,1)]" :style="{ gridTemplateRows: isOpen(g) ? '1fr' : '0fr' }">
-            <div class="overflow-hidden space-y-0.5 pt-0.5 transition-opacity duration-300" :class="isOpen(g) ? 'opacity-100' : 'opacity-0'">
-              <RouterLink
-                v-for="item in g.items"
-                :key="item.to"
-                :to="item.to"
-                class="flex items-center gap-2.5 h-8 px-2.5 rounded-md text-[13px] transition-[background-color,color,transform] duration-150 active:scale-[0.98]"
-                :class="isActive(item.to) ? 'bg-brand-soft text-brand font-medium' : 'text-muted hover:bg-surface-2 hover:text-ink'"
-                :tabindex="isOpen(g) ? 0 : -1"
-                @click="mobileOpen = false"
-              >
-                <component :is="item.icon" class="size-4 shrink-0" />
-                <span class="flex-1 truncate">{{ item.label }}</span>
-                <span v-if="item.phase" class="text-[10px] text-subtle">P{{ item.phase }}</span>
-              </RouterLink>
-            </div>
+        <div v-for="g in groups" :key="g.key" class="mt-4">
+          <div class="h-6 px-2.5 flex items-center text-[10.5px] font-semibold uppercase tracking-[0.08em] text-side-subtle">{{ g.label }}</div>
+          <div class="space-y-0.5 pt-0.5">
+            <RouterLink
+              v-for="item in g.items"
+              :key="item.to"
+              :to="item.to"
+              class="relative flex items-center gap-2.5 h-8 px-2.5 rounded-md text-[13px] transition-[background-color,color,transform] duration-150 active:scale-[0.98]"
+              :class="isActive(item.to) ? 'bg-side-active text-side-ink font-medium' : 'text-side-text hover:bg-side-hover hover:text-side-ink'"
+              @click="mobileOpen = false"
+            >
+              <span v-if="isActive(item.to)" class="absolute left-0 top-1.5 bottom-1.5 w-[3px] rounded-r bg-side-accent" aria-hidden="true" />
+              <component :is="item.icon" class="size-4 shrink-0" />
+              <span class="flex-1 truncate">{{ item.label }}</span>
+            </RouterLink>
           </div>
         </div>
       </nav>
-      <div class="p-3 border-t border-line">
+      <div class="p-3 border-t border-side-line">
         <div class="flex items-center gap-2.5">
-          <div class="size-8 rounded-full bg-moss-soft text-moss grid place-items-center text-[12px] font-semibold">{{ initials }}</div>
+          <div class="size-8 rounded-full bg-side-active text-side-ink grid place-items-center text-[12px] font-semibold">{{ initials }}</div>
           <div class="min-w-0 flex-1">
-            <div class="text-[13px] font-medium truncate">{{ auth.profile?.name }}</div>
-            <div class="text-[11px] text-subtle truncate">{{ roleLabels[auth.profile?.role ?? ''] }}<template v-if="auth.profile?.department"> · {{ auth.profile.department }}</template></div>
+            <div class="text-[13px] font-medium truncate text-side-ink">{{ auth.profile?.name }}</div>
+            <div class="text-[11px] text-side-subtle truncate">{{ roleLabels[auth.profile?.role ?? ''] }}<template v-if="auth.profile?.department"> · {{ auth.profile.department }}</template></div>
           </div>
-          <button class="btn-ghost btn-icon" :title="isDark ? 'Light mode' : 'Dark mode'" @click="toggle">
+          <button class="size-8 grid place-items-center rounded-md text-side-text hover:bg-side-hover hover:text-side-ink" :title="isDark ? 'Light mode' : 'Dark mode'" @click="toggle">
             <Sun v-if="isDark" class="size-4" /><Moon v-else class="size-4" />
           </button>
-          <button class="btn-ghost btn-icon" title="Sign out" @click="logout"><LogOut class="size-4" /></button>
+          <button class="size-8 grid place-items-center rounded-md text-side-text hover:bg-side-hover hover:text-side-ink" title="Sign out" @click="logout"><LogOut class="size-4" /></button>
         </div>
       </div>
     </aside>
