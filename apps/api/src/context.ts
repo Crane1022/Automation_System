@@ -50,6 +50,8 @@ export interface AppContext {
     cronSecret: string | null;
     cronCatchUpMs: number;
     cronWaitMs: number;
+    /** Keep webhook calls open until their run ends (Vercel without Redis), in ms. 0 = off. */
+    webhookWaitMs: number;
   };
   startedAt: number;
   /** Stops queues, schedulers and Redis connections. */

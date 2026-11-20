@@ -1,0 +1,475 @@
+{
+  "name": "Willow 4.0",
+  "nodes": [
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "SHEET123456789012345678",
+          "mode": "list",
+          "cachedResultName": "Willow 4.0 (N8N)",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/SHEET123456789012345678/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 125449995,
+          "mode": "list",
+          "cachedResultName": "System Prompt",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/SHEET123456789012345678/edit#gid=125449995"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        -480,
+        -96
+      ],
+      "id": "703034fc-b573-4b0c-b1a7-cc6633a51c46",
+      "name": "System Prompt",
+      "executeOnce": true,
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "n8n-cred",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://services.leadconnectorhq.com/conversations/messages",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Version",
+              "value": "2021-07-28"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Accept",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "type",
+              "value": "Live_Chat"
+            },
+            {
+              "name": "contactId",
+              "value": "={{ $('Webhook').item.json.body.customData.id }}"
+            },
+            {
+              "name": "message",
+              "value": "={{ $json.output }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        944,
+        -96
+      ],
+      "id": "31b32cb0-04db-4ed4-8074-14bc78be8528",
+      "name": "Reply to GHL",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "n8n-cred",
+          "name": "Header Auth account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "willow-test",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        -704,
+        -96
+      ],
+      "id": "a928e6d6-6505-452e-9898-e4a61948c6a1",
+      "name": "Webhook",
+      "webhookId": "willow-test"
+    },
+    {
+      "parameters": {
+        "sessionIdType": "customKey",
+        "sessionKey": "={{ $('Webhook').item.json.body.customData.id }}",
+        "contextWindowLength": 20
+      },
+      "id": "253aa691-0297-46c7-87b5-7c2690c5e5d6",
+      "name": "Memory",
+      "type": "@n8n/n8n-nodes-langchain.memoryBufferWindow",
+      "position": [
+        96,
+        128
+      ],
+      "typeVersion": 1.3
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "SHEET123456789012345678",
+          "mode": "list",
+          "cachedResultName": "Willow 4.0 (N8N)",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/SHEET123456789012345678/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 1535247496,
+          "mode": "list",
+          "cachedResultName": "Booking Details",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/SHEET123456789012345678/edit#gid=1535247496"
+        },
+        "options": {}
+      },
+      "id": "1d71ebc2-11de-4ee0-a0f1-7d8ba1c4526e",
+      "name": "Booking Details",
+      "type": "n8n-nodes-base.googleSheetsTool",
+      "position": [
+        208,
+        128
+      ],
+      "typeVersion": 4.7,
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "n8n-cred",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "SHEET123456789012345678",
+          "mode": "list",
+          "cachedResultName": "Willow 4.0 (N8N)",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/SHEET123456789012345678/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 876999674,
+          "mode": "list",
+          "cachedResultName": "Property Units",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/SHEET123456789012345678/edit#gid=876999674"
+        },
+        "options": {}
+      },
+      "id": "83063657-a561-4b3f-b45f-80477a007f59",
+      "name": "Property Units Info",
+      "type": "n8n-nodes-base.googleSheetsTool",
+      "position": [
+        352,
+        128
+      ],
+      "typeVersion": 4.7,
+      "notesInFlow": true,
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "n8n-cred",
+          "name": "Google Sheets account"
+        }
+      },
+      "notes": "ONLY use this tool if the guest has already been verified against the Booking Details sheet. Search ONLY for the specific Unit Number provided by the guest."
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "SHEET123456789012345678",
+          "mode": "list",
+          "cachedResultName": "Willow 4.0 (N8N)",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/SHEET123456789012345678/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 1784355321,
+          "mode": "list",
+          "cachedResultName": "Customer Service Team",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/SHEET123456789012345678/edit#gid=1784355321"
+        },
+        "options": {}
+      },
+      "id": "2eeeac84-9400-4cbd-ae1b-9b9e78060039",
+      "name": "Customer Service Team",
+      "type": "n8n-nodes-base.googleSheetsTool",
+      "position": [
+        480,
+        128
+      ],
+      "typeVersion": 4.7,
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "n8n-cred",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.limit",
+      "typeVersion": 1,
+      "position": [
+        -256,
+        -96
+      ],
+      "id": "83e6794f-1543-4166-934d-03586c65bde5",
+      "name": "Limit"
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "SHEET123456789012345678",
+          "mode": "list",
+          "cachedResultName": "Willow 4.0 (N8N)",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/SHEET123456789012345678/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 2133339271,
+          "mode": "list",
+          "cachedResultName": "FAQ (Coming Soon)",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/SHEET123456789012345678/edit#gid=2133339271"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheetsTool",
+      "typeVersion": 4.7,
+      "position": [
+        608,
+        128
+      ],
+      "id": "820ba192-854a-4e75-9fcc-90c27a3e8ad7",
+      "name": "FAQ ",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "n8n-cred",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "SHEET123456789012345678",
+          "mode": "list",
+          "cachedResultName": "Willow 4.0 (N8N)",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/SHEET123456789012345678/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 1344916716,
+          "mode": "list",
+          "cachedResultName": "Maintenance Data",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/SHEET123456789012345678/edit#gid=1344916716"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheetsTool",
+      "typeVersion": 4.7,
+      "position": [
+        736,
+        128
+      ],
+      "id": "18ce301c-0c8b-4bdb-8f4b-d2b477b7ea77",
+      "name": "Maintenance Data",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "n8n-cred",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ $('Webhook').first().json.body.message.body }}",
+        "options": {
+          "systemMessage": "={{ $('System Prompt').first().json['System Prompt:'] }}\n\n[SYSTEM DATA]\nUser Name: {{ $('Webhook').first().json.body.full_name }}\nUser Phone: {{ $('Webhook').first().json.body.phone }}\nToday's Date: {{ $now.format('yyyy-MM-dd') }}\nUser says: \"{{ $('Webhook').first().json.body.message.body }}\"",
+          "returnIntermediateSteps": false
+        }
+      },
+      "id": "c2384ecd-9e2a-41c5-8a67-d2a072256e53",
+      "name": "Talk to Your Data1",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "position": [
+        272,
+        -96
+      ],
+      "typeVersion": 2.2
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+      "typeVersion": 1,
+      "position": [
+        -16,
+        128
+      ],
+      "id": "be9a5eda-d4a5-4696-a6f5-6c61ded509a9",
+      "name": "Google Gemini Chat Model",
+      "credentials": {
+        "googlePalmApi": {
+          "id": "n8n-cred",
+          "name": "Syamim's Google Gemini(PaLM) Api account"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "System Prompt": {
+      "main": [
+        [
+          {
+            "node": "Limit",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "System Prompt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Memory": {
+      "ai_memory": [
+        [
+          {
+            "node": "Talk to Your Data1",
+            "type": "ai_memory",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Booking Details": {
+      "ai_tool": [
+        [
+          {
+            "node": "Talk to Your Data1",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Property Units Info": {
+      "ai_tool": [
+        [
+          {
+            "node": "Talk to Your Data1",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Customer Service Team": {
+      "ai_tool": [
+        [
+          {
+            "node": "Talk to Your Data1",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Limit": {
+      "main": [
+        [
+          {
+            "node": "Talk to Your Data1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "FAQ ": {
+      "ai_tool": [
+        [
+          {
+            "node": "Talk to Your Data1",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Maintenance Data": {
+      "ai_tool": [
+        [
+          {
+            "node": "Talk to Your Data1",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Talk to Your Data1": {
+      "main": [
+        [
+          {
+            "node": "Reply to GHL",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google Gemini Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Talk to Your Data1",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "id": "willow-test",
+  "tags": []
+}

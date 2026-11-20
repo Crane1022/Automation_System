@@ -1,0 +1,51 @@
+# AI Chatbot — moving “Willow 4.0” from n8n
+
+> 20 Nov 2026 · update: AI Chatbot step, Limit step, API key connections, safe JSON body.
+
+## What was missing before
+
+The n8n “Willow 4.0” workflow could not be imported because the platform had no equivalent for:
+
+| n8n node | Now becomes |
+|---|---|
+| AI Agent + Google Gemini Chat Model + Window Buffer Memory + 5 Google Sheets **tools** | **one AI Chatbot step** (model = your AI connection, memory = built in, tools = “Lists the bot may search”) |
+| Limit | **Limit** step |
+| HTTP Request with *Header Auth* credential | HTTP Request + **“Sign in with” an API key / token connection** |
+| HTTP body parameters | **Body: Fields** (quotes and new lines in AI answers no longer break the JSON) |
+| `{{ $now.format('yyyy-MM-dd') }}` | `{{ $today }}` |
+
+Importing `willow.json` now gives **0 “Needs replacing” steps**:
+Webhook → System Prompt (Sheets) → Limit → AI Chatbot → Reply to GHL.
+
+## How the AI Chatbot works
+
+1. It reads the **message** (e.g. `{{ $json.body.message.body }}`) and the **instructions** (system prompt).
+2. It loads the last *N* messages of this conversation (“Remember the conversation per”, e.g. the GHL contact id).
+   Memory is kept per workflow in Firestore `workflowChatMemory` (ids are hashed; deleted after 90 days without use).
+3. When it needs facts, the AI asks to search one of the lists. The server reads that Google Sheets tab,
+   finds matching rows (all words must match; phone numbers match on digits) and sends **at most 10 rows** back.
+   The whole sheet never goes to the AI. Max searches per answer is a setting (default 4).
+4. The reply is saved as `{{ $json.output }}` (same name as n8n), with `lookups` listing what it searched.
+
+Works with OpenAI, Claude and Gemini (it uses a small JSON protocol, not provider-specific tool calling).
+
+## API key / token connections
+
+Credentials → **API key / token**: name, websites it may be sent to (e.g. `services.leadconnectorhq.com`),
+header name (default `Authorization`) and the key. The key is encrypted; only its last 4 characters are shown.
+The HTTP Request step refuses to send it to any other website.
+
+## On Vercel (no Redis)
+
+Vercel pauses a function as soon as it has answered. A webhook run (the chatbot) would then stop halfway
+and stay “Running”. So on Vercel without Redis, a webhook call now **stays open until its run has finished**
+(max `WEBHOOK_WAIT_SECONDS`, default 25 s), then answers `202` as before. A normal reply takes 3–10 s.
+
+## Go-live checklist (Willow)
+
+1. `firebase deploy --only firestore` (new rule + TTL for `workflowChatMemory`).
+2. Credentials: AI service (Gemini), Google account (can open the Willow sheet), API key / token for GoHighLevel.
+3. Workflows → Import → `willow.json`. On the steps with a warning choose the connections:
+   *System Prompt* (Google), *Talk to Your Data1* (AI + Google account for look-ups), *Reply to GHL* (Sign in with).
+4. Test run with a sample body, check Executions → each step.
+5. Publish, copy the new webhook URL, change the GoHighLevel workflow’s webhook to it. Switch n8n’s copy off.

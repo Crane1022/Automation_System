@@ -4,13 +4,14 @@ import { manualTrigger } from './nodes/manual-trigger.js';
 import { webhookTrigger } from './nodes/webhook-trigger.js';
 import { ifCondition } from './nodes/if-condition.js';
 import { httpRequest } from './nodes/http-request.js';
-import { combineNode, filterNode, loopNode, mergeNode, switchNode, waitNode } from './nodes/logic.js';
+import { combineNode, filterNode, limitNode, loopNode, mergeNode, switchNode, waitNode } from './nodes/logic.js';
 import { eventTrigger, scheduleTrigger } from './nodes/triggers.js';
 import { codeNode } from './nodes/code.js';
 import { firebaseCreate, firebaseDelete, firebaseRead, firebaseUpdate } from './nodes/firebase.js';
 import { gmailRead, gmailSend } from './nodes/gmail.js';
 import { sheetsCreateRow, sheetsRead, sheetsUpdateRow } from './nodes/sheets.js';
 import { aiAgent, aiChat, aiClassify, aiExtract } from './nodes/ai.js';
+import { aiChatbot } from './nodes/chatbot.js';
 import { unsupportedNode } from './nodes/unsupported.js';
 
 /**
@@ -61,13 +62,13 @@ export function createDefaultRegistry(): NodeRegistry {
     // triggers
     manualTrigger, webhookTrigger, scheduleTrigger, eventTrigger,
     // logic
-    ifCondition, switchNode, filterNode, mergeNode, loopNode, waitNode, combineNode,
+    ifCondition, switchNode, filterNode, mergeNode, loopNode, waitNode, combineNode, limitNode,
     // data
     httpRequest, codeNode, firebaseRead, firebaseCreate, firebaseUpdate, firebaseDelete,
     // communication
     gmailSend, gmailRead,
     sheetsRead, sheetsCreateRow, sheetsUpdateRow,
-    aiChat, aiClassify, aiExtract, aiAgent,
+    aiChat, aiChatbot, aiClassify, aiExtract, aiAgent,
     // imports
     unsupportedNode,
   ];

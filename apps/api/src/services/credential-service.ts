@@ -2,8 +2,8 @@ import crypto from 'node:crypto';
 import { cert, getApp, initializeApp } from 'firebase-admin/app';
 import { getFirestore, Timestamp, DocumentReference, GeoPoint, type Firestore } from 'firebase-admin/firestore';
 import type { AiService, AppUser, Credential } from '@widebed/shared';
-import { AI_SERVICE_INFO, collectionAllowed, hasPermission, maskUsername } from '@widebed/shared';
-import type { AiRequest, AiResponse, FirestoreAccess, FirestoreDoc } from '@widebed/nodes';
+import { AI_SERVICE_INFO, collectionAllowed, hasPermission, maskUsername, validHeaderName } from '@widebed/shared';
+import type { AiRequest, AiResponse, ApiKeyAccess, FirestoreAccess, FirestoreDoc } from '@widebed/nodes';
 import { aiComplete, aiStream, defaultAiFetch, defaultAiStreamFetch, listAiModels, type AiFetch, type AiStreamFetch } from './ai-client.js';
 import { NodeError, buildMime } from '@widebed/nodes';
 import type { Repositories } from '../repositories/types.js';
@@ -14,7 +14,9 @@ import { badRequest, forbidden, notFound } from '../lib/http-error.js';
 /** Collections of the automation platform itself — never reachable from Firebase nodes. */
 const PLATFORM_COLLECTIONS = new Set([
   'users', 'workflows', 'workflowVersions', 'workflowExecutions', 'workflowFolders', 'workflowTemplates', 'webhookEndpoints',
-  'credentials', 'credentialSecrets', 'auditLogs', 'systemSettings',
+  'credentials', 'credentialSecrets', 'auditLogs', 'systemSettings', 'workflowChatMemory',
+  'assistantChats', 'assistantMemories', 'aiAgents', 'aiTasks', 'aiSchedules', 'aiResponsibilities', 'aiNotifications',
+  'aiApprovals', 'aiProjects', 'aiKnowledge', 'aiUsage',
 ]);
 
 const GOOGLE_SCOPES = [
@@ -229,6 +231,31 @@ export class CredentialService {
     const c = await this.loadForRun(id, 'website_login', department);
     const s = await this.readSecret(id);
     return { credential: c, username: String(s.username ?? ''), password: String(s.password ?? '') };
+  }
+
+  /* ------------------------------------------------------------ API keys */
+
+  /** An API key or token for HTTP Request nodes. Only sent to the listed websites. Never shown again. */
+  async createApiKey(user: AppUser, input: { name: string; department: string | null; headerName: string; value: string; allowedDomains: string[] }) {
+    const details = apiKeyDetails(input.headerName, input.value, input.allowedDomains);
+    return this.save(user, { name: input.name, provider: 'api_key', department: input.department, details }, { value: input.value.trim() });
+  }
+
+  async updateApiKey(id: string, input: { headerName?: string; value?: string; allowedDomains?: string[] }) {
+    const c = await this.o.repos.credentials.get(id);
+    if (!c || c.provider !== 'api_key') throw notFound('Connection not found');
+    const secret = await this.readSecret(id);
+    const value = input.value?.trim() || String(secret.value ?? '');
+    const details = apiKeyDetails(input.headerName ?? c.details.headerName ?? 'Authorization', value, input.allowedDomains ?? c.details.allowedDomains ?? []);
+    if (input.value?.trim()) await this.o.repos.credentialSecrets.set(id, this.o.box.encrypt(JSON.stringify({ value })));
+    await this.o.repos.credentials.update(id, { details, status: 'connected', updatedAt: nowIso() });
+  }
+
+  /** For the HTTP Request node only (server side). */
+  async apiKey(id: string, department: string | null): Promise<ApiKeyAccess> {
+    const c = await this.loadForRun(id, 'api_key', department);
+    const s = await this.readSecret(id);
+    return { name: c.name, headerName: c.details.headerName ?? 'Authorization', value: String(s.value ?? ''), allowedDomains: c.details.allowedDomains ?? [] };
   }
 
   async createEventSource(user: AppUser, name: string) {
@@ -535,6 +562,8 @@ export class CredentialService {
         result = res.status === 200 ? { ok: true, message: `Connected as ${res.json.emailAddress}` } : { ok: false, message: res.json?.error?.message ?? `HTTP ${res.status}` };
       } else if (c.provider === 'website_login') {
         result = { ok: true, message: `Saved for ${c.details.loginUrl}. The assistant tests it when it signs in.` };
+      } else if (c.provider === 'api_key') {
+        result = { ok: true, message: `Saved. Sent as “${c.details.headerName}” to ${(c.details.allowedDomains ?? []).join(', ')}. Test it with an HTTP Request node.` };
       } else if (c.provider === 'ai_provider') {
         const { apiKey } = await this.readSecret(id);
         result = await this.tryAi(c.details.aiService ?? 'openai', c.details.model ?? AI_SERVICE_INFO[c.details.aiService ?? 'openai'].defaultModel, apiKey);
@@ -589,6 +618,18 @@ export function toPlain(v: unknown): unknown {
 }
 
 /** Checks a website login's addresses: https only, and the login page must be on an allowed domain. */
+function apiKeyDetails(headerName: string, value: string, domains: string[]) {
+  const header = headerName.trim() || 'Authorization';
+  if (!validHeaderName(header)) throw badRequest('The header name may only contain letters, numbers and “-” (e.g. Authorization or X-API-Key)');
+  const v = value.trim();
+  if (!v) throw badRequest('Paste the key or token');
+  if (/[\r\n]/.test(v)) throw badRequest('The key must be on one line');
+  const allowedDomains = [...new Set(domains.map((d) => d.trim().toLowerCase().replace(/^https?:\/\//, '').replace(/[/:].*$/, '')).filter(Boolean))].slice(0, 10);
+  if (!allowedDomains.length) throw badRequest('List at least one website the key may be sent to, e.g. services.leadconnectorhq.com');
+  if (allowedDomains.some((d) => !/^(\*\.)?[a-z0-9-]+(\.[a-z0-9-]+)+$/.test(d))) throw badRequest('Websites must look like services.leadconnectorhq.com');
+  return { headerName: header, allowedDomains, keyEnding: v.length > 8 ? v.slice(-4) : '' };
+}
+
 function websiteDetails(loginUrl: string, domains: string[], username: string, selectors?: { username?: string; password?: string; submit?: string }) {
   let url: URL;
   try {

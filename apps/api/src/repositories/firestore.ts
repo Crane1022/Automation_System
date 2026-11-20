@@ -44,6 +44,7 @@ export function createFirestoreRepositories(db: Firestore, opts: { retentionDays
     webhooks: db.collection('webhookEndpoints'),
     audit: db.collection('auditLogs'),
     settings: db.collection('systemSettings'),
+    chatMemory: db.collection('workflowChatMemory'),
     credentials: db.collection('credentials'),
     secrets: db.collection('credentialSecrets'),
   };
@@ -447,6 +448,12 @@ export function createFirestoreRepositories(db: Firestore, opts: { retentionDays
     settings: {
       async get(key) { const raw = data<any>(await C.settings.doc(key).get()); return raw ? (raw.settingValue as any) : null; },
       async set(key, value) { await C.settings.doc(key).set({ settingValue: value, updatedAt: new Date().toISOString() }); },
+    },
+
+    chatMemory: {
+      async get(id) { const raw = data<any>(await C.chatMemory.doc(id).get()); if (!raw) return null; const { expireAt: _e, ...rest } = raw; return rest; },
+      async set(id, value) { await C.chatMemory.doc(id).set({ ...value, expireAt: Timestamp.fromMillis(Date.now() + 90 * 86400_000) }); },
+      async delete(id) { await C.chatMemory.doc(id).delete(); },
     },
 
     webhooks: {

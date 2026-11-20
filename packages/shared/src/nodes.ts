@@ -35,7 +35,11 @@ export type FieldType =
   /** Toggle buttons that allow several choices (uses `options`), value string[]. */
   | 'multiSelect'
   /** Dropdown of `options` that also keeps any other saved value. */
-  | 'timezone';
+  | 'timezone'
+  /** Picks a saved connection of `credentialProvider`; value is its id ('' = none). */
+  | 'credential'
+  /** A list of small records; each record has the fields in `itemFields` (string / text / number only). */
+  | 'list';
 
 export interface FieldDescriptor {
   key: string;
@@ -56,6 +60,10 @@ export interface FieldDescriptor {
   expressions?: boolean;
   /** Only show this field when another field has a given value. */
   showIf?: { key: string; equals: unknown[] };
+  /** credential fields: which kind of connection can be picked. */
+  credentialProvider?: string;
+  /** list fields: the fields of one record. */
+  itemFields?: FieldDescriptor[];
 }
 
 /** JSON-Schema-like description used for documentation and validation hints. */
@@ -110,4 +118,20 @@ export function resolveOutputs(d: NodeDescriptor, config: Record<string, unknown
     .map((c, i) => ({ id: c.id as string, label: String(c[d.dynamicOutputs!.labelKey] || `Case ${i + 1}`) }));
   if (d.dynamicOutputs.fallback) out.push(d.dynamicOutputs.fallback);
   return out;
+}
+
+/** Fields of a node type that hold a connection id in the config (besides the main "Connection"). */
+export function credentialFields(d: NodeDescriptor | undefined): { key: string; provider: string }[] {
+  return (d?.fields ?? []).filter((f) => f.type === 'credential' && f.credentialProvider).map((f) => ({ key: f.key, provider: f.credentialProvider! }));
+}
+
+/** Every connection id a node uses: its main connection plus connection fields in its config. */
+export function credentialRefs(node: { credentialId?: string | null; config?: Record<string, unknown> }, d: NodeDescriptor | undefined): string[] {
+  const ids = new Set<string>();
+  if (node.credentialId) ids.add(node.credentialId);
+  for (const f of credentialFields(d)) {
+    const v = node.config?.[f.key];
+    if (typeof v === 'string' && v.trim()) ids.add(v.trim());
+  }
+  return [...ids];
 }

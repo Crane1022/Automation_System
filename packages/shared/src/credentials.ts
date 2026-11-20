@@ -8,7 +8,7 @@
  * only ever decrypted inside the API / worker while a node runs.
  */
 
-export const CREDENTIAL_PROVIDERS = ['firebase_service_account', 'google_oauth', 'event_source', 'ai_provider', 'website_login'] as const;
+export const CREDENTIAL_PROVIDERS = ['firebase_service_account', 'google_oauth', 'event_source', 'ai_provider', 'website_login', 'api_key'] as const;
 export type CredentialProvider = (typeof CREDENTIAL_PROVIDERS)[number];
 
 export interface CredentialDetails {
@@ -35,6 +35,8 @@ export interface CredentialDetails {
   usernameHint?: string;
   /** Optional CSS selectors when the login page is unusual (set by IT). */
   selectors?: { username?: string; password?: string; submit?: string };
+  /** api_key: the header the key is sent in (e.g. "Authorization"). Sites it may go to are in allowedDomains. */
+  headerName?: string;
 }
 
 export interface Credential {
@@ -59,6 +61,7 @@ export const PROVIDER_LABELS: Record<CredentialProvider, string> = {
   event_source: 'Event source (PMS, TMS…)',
   ai_provider: 'AI service (OpenAI, Claude, Gemini)',
   website_login: 'Website login (for the assistant’s browser)',
+  api_key: 'API key / token (for HTTP Request)',
 };
 
 /** "neokahoong@widebed.com" → "ne•••@widebed.com", "220012345678" → "22•••78". */
@@ -67,6 +70,11 @@ export function maskUsername(u: string): string {
   const at = s.indexOf('@');
   if (at > 0) return `${s.slice(0, Math.min(2, at))}•••${s.slice(at)}`;
   return s.length <= 4 ? '•••' : `${s.slice(0, 2)}•••${s.slice(-2)}`;
+}
+
+/** Header names an API key connection may use. Hop-by-hop and body headers are refused. */
+export function validHeaderName(name: string): boolean {
+  return /^[A-Za-z0-9][A-Za-z0-9-]{0,63}$/.test(name) && !/^(host|content-length|content-type|connection|transfer-encoding|te|upgrade|cookie)$/i.test(name);
 }
 
 /** Host names a website login may open: the login page's host plus the listed domains (and their sub-domains). */

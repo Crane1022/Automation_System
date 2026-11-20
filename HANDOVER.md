@@ -85,10 +85,10 @@ workflow JSON format, the node contract and the security design.
 | Category | Nodes |
 |---|---|
 | Triggers | Manual, Webhook (URL token + optional HMAC), Schedule (once on a date, every day / week / month with time pickers, every N minutes, or cron for IT; time zone), HTTP Event (named events from PMS/TMS with event-source keys) |
-| Logic | IF, Switch (dynamic outputs), Filter, Merge (append / by position / wait both / **match by fields**), Loop (list → items, or N times), Wait (≤ `WAIT_MAX_MS`), **Combine into One**. IF/Filter have **date checks** (today, tomorrow, N days ago…) and expressions have `{{ $today }}` |
-| Data | HTTP Request, Code Execution (sandboxed; IT Admin only), Firebase Read / Create / Update / Delete (other projects, allow-listed collections, optional read-only) |
+| Logic | IF, Switch (dynamic outputs), Filter, Merge (append / by position / wait both / **match by fields**), Loop (list → items, or N times), Wait (≤ `WAIT_MAX_MS`), **Combine into One**, **Limit**. IF/Filter have **date checks** (today, tomorrow, N days ago…) and expressions have `{{ $today }}` |
+| Data | HTTP Request (optional **“Sign in with” API key / token** connection, only sent to its listed websites; **Body “Fields”** builds safe JSON), Code Execution (sandboxed; IT Admin only), Firebase Read / Create / Update / Delete (other projects, allow-listed collections, optional read-only) |
 | Communication | Gmail Send / Read, Google Sheets Read Rows / Add Row / Update Row (one Google OAuth connection) |
-| AI | AI Write / Answer, AI Sort into Categories, AI Pull Out Details, **AI Agent** (runs the Assistant on a schedule) |
+| AI | AI Write / Answer, **AI Chatbot** (instructions + conversation memory per contact + Google Sheets look-ups; replaces the n8n AI Agent), AI Sort into Categories, AI Pull Out Details, **AI Agent** (runs the Assistant on a schedule) |
 | Import helper | "Needs replacing" placeholder for imported nodes with no equivalent (blocks Publish) |
 
 Nothing is greyed out any more. Trello is **not used** by Widebed (dropped 14 Nov 2026).

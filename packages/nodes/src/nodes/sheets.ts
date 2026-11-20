@@ -73,9 +73,9 @@ export function cellValue(v: unknown, allowFormulas: boolean): string | number |
   return s;
 }
 
-async function connect(ctx: Ctx): Promise<Conn> {
-  if (!ctx.node.credentialId) throw new NodeError('Choose a Google account for this node', { code: 'NO_CREDENTIAL' });
-  const c = await requireService(ctx.services, 'googleToken', 'Google access')(ctx.node.credentialId);
+async function connect(ctx: Ctx, credentialId = ctx.node.credentialId): Promise<Conn> {
+  if (!credentialId) throw new NodeError('Choose a Google account for this node', { code: 'NO_CREDENTIAL' });
+  const c = await requireService(ctx.services, 'googleToken', 'Google access')(credentialId);
   if (c.scopes && c.scopes.length && !c.scopes.includes(SHEETS_SCOPE)) {
     throw new NodeError('This Google connection has no Google Sheets access yet. Go to Credentials and click “Reconnect” on it.', { code: 'SHEETS_SCOPE' });
   }
@@ -205,6 +205,16 @@ function tableCache() {
     if (!m.has(key)) m.set(key, loadTable(ctx, conn, cfg, raw));
     return m.get(key)!;
   };
+}
+
+/**
+ * Reads a whole tab as row objects, for other nodes (e.g. the AI Chatbot's look-ups).
+ * `credentialId` is a Google account connection.
+ */
+export async function readSheetRows(ctx: NodeExecutionContext<any>, credentialId: string, cfg: { spreadsheet: unknown; sheet: unknown; headerRow?: number }) {
+  const conn = await connect(ctx, credentialId);
+  const t = await loadTable(ctx, conn, { spreadsheet: cfg.spreadsheet, sheet: cfg.sheet, headerRow: cfg.headerRow ?? 1 });
+  return { title: t.title, columns: t.headers.filter((h): h is string => !!h), rows: t.rows.map((r) => withRow(rowObject(t, r.cells), r.rowNumber)) };
 }
 
 /* ------------------------------------------------------------- shared fields */

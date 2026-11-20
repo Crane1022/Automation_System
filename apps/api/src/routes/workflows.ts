@@ -2,6 +2,8 @@ import { Router, type Request } from 'express';
 import type { AppUser, Item, Workflow, WorkflowDefinition, WorkflowVersion } from '@widebed/shared';
 import {
   canEditWorkflow,
+  credentialFields,
+  credentialRefs,
   canPublishWorkflow,
   canRunWorkflow,
   canViewWorkflow,
@@ -57,7 +59,7 @@ export function workflowsRouter(ctx: AppContext) {
       const changed = next.nodes.some((n) => n.type === 'data.code' && before.get(n.id) !== JSON.stringify(n.config));
       if (changed) throw forbidden('Only IT Admins can add or change Code nodes');
     }
-    const ids = [...new Set(next.nodes.map((n) => n.credentialId).filter((x): x is string => !!x))];
+    const ids = [...new Set(next.nodes.flatMap((n) => credentialRefs(n, ctx.registry.get(n.type)?.descriptor)))];
     for (const id of ids) {
       const c = await repos.credentials.get(id);
       if (!c || !ctx.credentials.visibleTo(user, c)) throw forbidden('A node uses a connection you do not have access to');
@@ -148,17 +150,32 @@ export function workflowsRouter(ctx: AppContext) {
     const definition = definitionSchema.parse(result.definition);
     const visible = await ctx.credentials.listVisible(user);
     const refs = detectFormat(file) === 'widebed' ? ((file as ExportFile).credentials ?? []) : [];
-    relinkCredentials(definition, refs, visible, result.report, (type) => ctx.registry.get(type)?.descriptor.credentialProvider);
+    relinkCredentials(definition, refs, visible, result.report, (type) => ctx.registry.get(type)?.descriptor.credentialProvider, (type) => credentialFields(ctx.registry.get(type)?.descriptor));
     // Templates: when there is exactly one usable connection of the right kind, pick it for the user.
     if (req.body.autoConnect === true) {
       for (const node of definition.nodes) {
-        const provider = ctx.registry.get(node.type)?.descriptor.credentialProvider;
-        if (!provider || node.credentialId) continue;
-        const options = visible.filter((c) => c.provider === provider && c.status !== 'error');
-        if (options.length === 1) {
-          node.credentialId = options[0]!.credentialId;
-          result.report.needsCredential = result.report.needsCredential.filter((x) => x !== node.name);
+        const d = ctx.registry.get(node.type)?.descriptor;
+        const pick = (provider: string) => {
+          const options = visible.filter((c) => c.provider === provider && c.status !== 'error');
+          return options.length === 1 ? options[0]!.credentialId : null;
+        };
+        let open = false;
+        let tried = false;
+        if (d?.credentialProvider && !node.credentialId) {
+          tried = true;
+          node.credentialId = pick(d.credentialProvider);
+          open ||= !node.credentialId;
         }
+        for (const f of credentialFields(d)) {
+          // Only fill connection fields the node really needs (an optional "Sign in with" stays empty).
+          const needed = f.key === 'googleConnection' && Array.isArray(node.config.lookups) && node.config.lookups.length > 0;
+          if (!needed || node.config[f.key]) continue;
+          tried = true;
+          const id = pick(f.provider);
+          if (id) node.config = { ...node.config, [f.key]: id };
+          else open = true;
+        }
+        if (tried && !open) result.report.needsCredential = result.report.needsCredential.filter((x) => x !== node.name);
       }
     }
     await checkDefinitionRights(user, definition, null);

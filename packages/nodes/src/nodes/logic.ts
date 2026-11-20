@@ -410,3 +410,52 @@ export const combineNode = defineNode({
     return { outputs: { main: [{ json: { count: ctx.items.length, [ctx.config.saveAs]: lines.join('\n'), items: items.map(({ item }) => item.json) } }] } };
   },
 });
+
+/* -------------------------------------------------------------------- Limit */
+
+export const limitNode = defineNode({
+  descriptor: {
+    type: 'logic.limit',
+    version: 1,
+    displayName: 'Limit',
+    description: 'Keep only the first (or last) few items and drop the rest.',
+    category: 'logic',
+    icon: 'list-end',
+    isTrigger: false,
+    inputs: [{ id: 'main' }],
+    outputs: [{ id: 'main' }],
+    fields: [
+      { key: 'maxItems', label: 'Keep at most', type: 'number', default: 1, help: 'How many items continue. 1 = only one item, e.g. the settings row of a sheet.' },
+      {
+        key: 'keep',
+        label: 'Which ones',
+        type: 'select',
+        default: 'first',
+        options: [
+          { label: 'The first items', value: 'first' },
+          { label: 'The last items', value: 'last' },
+        ],
+      },
+    ],
+    inputSchema: { description: 'Any items.' },
+    outputSchema: { description: 'The same items, cut to the number you chose.', example: [{ json: { 'System Prompt:': 'You are Willow…' } }] },
+    retryable: false,
+    available: true,
+    docs: [
+      '### Limit',
+      'Stops a workflow from doing the same thing many times by mistake.',
+      '',
+      '**Example** — a sheet holds the chatbot’s instructions in its first row: *Google Sheets Read Rows* → **Limit (1)** → *AI Chatbot*. Without the Limit, the chatbot would answer once per row.',
+    ].join('\n'),
+  },
+  configSchema: z.object({
+    maxItems: z.coerce.number().int('Use a whole number').min(1, 'Keep at least 1 item').max(100000).default(1),
+    keep: z.enum(['first', 'last']).default('first'),
+  }),
+  async execute(ctx) {
+    const { maxItems, keep } = ctx.config;
+    const items = keep === 'last' ? ctx.items.slice(Math.max(0, ctx.items.length - maxItems)) : ctx.items.slice(0, maxItems);
+    if (items.length < ctx.items.length) ctx.log(`Kept ${items.length} of ${ctx.items.length} items`);
+    return { outputs: { main: items } };
+  },
+});

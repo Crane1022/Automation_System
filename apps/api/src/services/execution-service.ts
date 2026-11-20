@@ -8,7 +8,8 @@ import type {
   WorkflowDefinition,
 } from '@widebed/shared';
 import { TERMINAL_STATUSES, WORKFLOW_SCHEMA_VERSION } from '@widebed/shared';
-import type { AgentRunRequest, AgentRunResult, NodeRegistry, NodeServices, SafeHttpClient } from '@widebed/nodes';
+import { createHash } from 'node:crypto';
+import type { AgentRunRequest, AgentRunResult, ChatMemoryAccess, NodeRegistry, NodeServices, SafeHttpClient } from '@widebed/nodes';
 import { NodeError } from '@widebed/nodes';
 import { runWorkflow, validateWorkflow, WorkflowValidationError } from '@widebed/engine';
 import type { Repositories, StoredExecution } from '../repositories/types.js';
@@ -312,6 +313,8 @@ export class ExecutionService {
       firestore: credentials ? (id) => credentials.firestoreAccess(id, dept) : undefined,
       googleToken: credentials ? (id) => credentials.googleToken(id, dept) : undefined,
       ai: credentials ? (id, req) => credentials.ai(id, dept, req) : undefined,
+      apiKey: credentials ? (id) => credentials.apiKey(id, dept) : undefined,
+      chatMemory: chatMemoryFor(this.deps.repos, exec.workflowId),
       wait: async (ms, signal) => {
         if (ms > waitMaxMs) throw new NodeError(`Wait is longer than the allowed maximum (${Math.round(waitMaxMs / 60000)} min)`, { code: 'WAIT_TOO_LONG' });
         if (ms <= 0) return;
@@ -402,4 +405,24 @@ function pickTrigger(def: WorkflowDefinition, registry: NodeRegistry, triggerTyp
   const wanted: Record<string, string> = { webhook: 'trigger.webhook', schedule: 'trigger.schedule', http_event: 'trigger.event' };
   // Manual runs prefer a Manual Trigger but can also start any other trigger with its test data.
   return (triggers.find((t) => t.type === (wanted[triggerType] ?? 'trigger.manual')) ?? triggers[0])?.id;
+}
+
+/**
+ * Conversation memory of AI Chatbot nodes. One document per workflow + conversation id
+ * (hashed, so phone numbers or emails are not visible in document ids).
+ */
+export function chatMemoryFor(repos: Repositories, workflowId: string): ChatMemoryAccess {
+  const id = (conversationId: string) => createHash('sha256').update(`${workflowId}\n${conversationId}`).digest('hex').slice(0, 40);
+  return {
+    async load(conversationId) {
+      const doc = await repos.chatMemory.get(id(conversationId));
+      return doc && doc.workflowId === workflowId ? doc.turns : [];
+    },
+    async save(conversationId, turns) {
+      await repos.chatMemory.set(id(conversationId), { workflowId, turns, updatedAt: new Date().toISOString() });
+    },
+    async clear(conversationId) {
+      await repos.chatMemory.delete(id(conversationId));
+    },
+  };
 }

@@ -1,8 +1,10 @@
 <script setup lang="ts">
 import { clone } from '@/lib/clone';
-import { computed } from 'vue';
+import { computed, watch } from 'vue';
 import { Plus, X, Braces } from '@lucide/vue';
 import type { FieldDescriptor } from '@widebed/shared';
+import { PROVIDER_LABELS, type CredentialProvider } from '@widebed/shared';
+import { useCredentialsStore } from '@/stores/credentials';
 
 /** Renders one config field from a node descriptor. */
 const props = defineProps<{ field: FieldDescriptor; modelValue: unknown; readonly?: boolean }>();
@@ -91,6 +93,24 @@ function setCond(i: number, key: 'left' | 'operator' | 'right', v: string) {
   value.value = l;
 }
 
+/** credential fields: saved connections of the right kind. */
+const creds = useCredentialsStore();
+watch(() => props.field.type, (t) => t === 'credential' && creds.load().catch(() => undefined), { immediate: true });
+const credOptions = computed(() => (props.field.credentialProvider ? creds.byProvider(props.field.credentialProvider) : []));
+const credLabel = computed(() => PROVIDER_LABELS[props.field.credentialProvider as CredentialProvider] ?? 'connection');
+
+/** list fields: small records (e.g. the sheets an AI Chatbot may search). */
+type Rec = Record<string, unknown>;
+const records = computed<Rec[]>(() => (Array.isArray(value.value) ? (value.value as Rec[]) : []));
+function setRecord(i: number, key: string, v: unknown) {
+  const l = clone(records.value);
+  l[i] = { ...l[i], [key]: v };
+  value.value = l;
+}
+function addRecord() {
+  value.value = [...records.value, Object.fromEntries((props.field.itemFields ?? []).map((f) => [f.key, f.default ?? '']))];
+}
+
 const jsonError = computed(() => {
   if (props.field.type !== 'json' || typeof value.value !== 'string' || !value.value.trim()) return null;
   try {
@@ -142,6 +162,38 @@ const jsonError = computed(() => {
       <option v-for="o in field.options" :key="o.value" :value="o.value">{{ o.label }}</option>
       <option v-if="value && !field.options?.some((o) => o.value === value)" :value="value">{{ value }}</option>
     </select>
+
+    <!-- A saved connection (optional unless the node says otherwise) -->
+    <template v-else-if="field.type === 'credential'">
+      <select v-model="value" class="input" :disabled="readonly">
+        <option value="">{{ field.required ? `Choose a ${credLabel}…` : 'None' }}</option>
+        <option v-for="c in credOptions" :key="c.credentialId" :value="c.credentialId">
+          {{ c.name }}{{ c.details.accountEmail ? ` (${c.details.accountEmail})` : '' }}{{ c.status === 'error' ? ' — needs attention' : '' }}
+        </option>
+        <option v-if="value && !credOptions.some((c) => c.credentialId === value)" :value="value">Connection you cannot see</option>
+      </select>
+      <p class="text-[11px] text-subtle mt-1">
+        <template v-if="!credOptions.length">No {{ credLabel }} yet. </template>
+        <RouterLink to="/credentials" target="_blank" class="text-brand hover:underline">Manage connections</RouterLink>
+      </p>
+    </template>
+
+    <!-- List of small records -->
+    <div v-else-if="field.type === 'list'" class="space-y-2">
+      <div v-for="(r, i) in records" :key="i" class="rounded-md border border-line bg-surface-2 p-2 space-y-1.5">
+        <div class="flex items-center justify-between">
+          <span class="text-[11px] font-medium text-subtle">#{{ i + 1 }} {{ String(r[field.itemFields?.[0]?.key ?? ''] ?? '') }}</span>
+          <button v-if="!readonly" class="btn-ghost btn-icon size-6" aria-label="Remove" @click="removeAt(i)"><X class="size-3.5" /></button>
+        </div>
+        <div v-for="sub in field.itemFields" :key="sub.key">
+          <label class="text-[11px] text-muted">{{ sub.label }}<span v-if="sub.required" class="text-bad"> *</span></label>
+          <textarea v-if="sub.type === 'text'" :value="String(r[sub.key] ?? '')" class="textarea text-[12px]" rows="2" :placeholder="sub.placeholder" :readonly="readonly" @input="setRecord(i, sub.key, inputValue($event))" />
+          <input v-else-if="sub.type === 'number'" :value="r[sub.key] as number" type="number" class="input" :readonly="readonly" @input="setRecord(i, sub.key, Number(inputValue($event)))" />
+          <input v-else :value="String(r[sub.key] ?? '')" class="input text-[12px]" :placeholder="sub.placeholder" :readonly="readonly" @input="setRecord(i, sub.key, inputValue($event))" />
+        </div>
+      </div>
+      <button v-if="!readonly" class="btn-ghost h-7 text-[12px]" @click="addRecord"><Plus class="size-3.5" />{{ field.addLabel ?? 'Add' }}</button>
+    </div>
 
     <!-- Key / value list (headers, query) -->
     <div v-else-if="field.type === 'keyValue'" class="space-y-1.5">

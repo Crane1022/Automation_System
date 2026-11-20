@@ -15,3 +15,4 @@ export * from './nodes/gmail.js';
 export * from './nodes/unsupported.js';
 export * from './nodes/sheets.js';
 export * from './nodes/ai.js';
+export * from './nodes/chatbot.js';

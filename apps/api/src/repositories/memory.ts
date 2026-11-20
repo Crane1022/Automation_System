@@ -31,6 +31,7 @@ export function createMemoryRepositories(): Repositories {
   const chatImages = new Map<string, Map<string, any>>();
   const kChunks = new Map<string, any[]>();
   const settings = new Map<string, unknown>();
+  const chatMemory = new Map<string, any>();
   const webhooks = new Map<string, WebhookEndpoint>();
   const audit: AuditLog[] = [];
   const creds = new Map<string, Credential>();
@@ -246,6 +247,11 @@ export function createMemoryRepositories(): Repositories {
     settings: {
       async get(key) { return settings.has(key) ? clone(settings.get(key)) as any : null; },
       async set(key, value) { settings.set(key, clone(value)); },
+    },
+    chatMemory: {
+      async get(id) { return chatMemory.has(id) ? clone(chatMemory.get(id)) : null; },
+      async set(id, v) { chatMemory.set(id, clone(v)); },
+      async delete(id) { chatMemory.delete(id); },
     },
     webhooks: {
       async create(w) { webhooks.set(w.webhookId, clone(w)); },

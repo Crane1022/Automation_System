@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted } from 'vue';
 import { useRouter } from 'vue-router';
-import { Bot, CheckCircle2, Circle, Database, GlobeLock, Mail, Radio, Sheet, Webhook, Wrench, type LucideIcon } from '@lucide/vue';
+import { Bot, CheckCircle2, Circle, Database, GlobeLock, KeySquare, Mail, Radio, Sheet, Webhook, Wrench, type LucideIcon } from '@lucide/vue';
 import type { Credential, CredentialProvider } from '@widebed/shared';
 import PageHeader from '@/components/ui/PageHeader.vue';
 import StatusBadge from '@/components/ui/StatusBadge.vue';
@@ -47,6 +47,7 @@ const cards: Card[] = [
   { key: 'anthropic', name: 'Anthropic (Claude)', icon: Bot, tint: 'bg-[#efe8f5] text-[#6c4a8f] dark:bg-[#2a2233] dark:text-[#b99ad6]', what: 'AI that writes, sorts and reads text in your workflows.', examples: ['Sort guest emails', 'Summarise complaints'], provider: 'ai_provider', match: (c) => c.details.aiService === 'anthropic', add: 'anthropic' },
   { key: 'gemini', name: 'Google Gemini', icon: Bot, tint: 'bg-[#efe8f5] text-[#6c4a8f] dark:bg-[#2a2233] dark:text-[#b99ad6]', what: 'AI that writes, sorts and reads text in your workflows.', examples: ['Translate guest messages', 'Pull details out of emails'], provider: 'ai_provider', match: (c) => c.details.aiService === 'gemini', add: 'gemini' },
   { key: 'websites', name: 'Websites (Assistant browser)', icon: GlobeLock, tint: 'bg-surface-2 text-muted', what: 'Saved logins the Assistant’s browser may use, e.g. myTNB. Passwords are encrypted and never shown to the AI.', examples: ['Collect TNB bills', 'Check a supplier portal'], provider: 'website_login', add: 'website' },
+  { key: 'apikeys', name: 'Other apps with an API key (GoHighLevel…)', icon: KeySquare, tint: 'bg-surface-2 text-muted', what: 'Call any app’s API from an HTTP Request step. The key is encrypted and only sent to the websites you list.', examples: ['Reply to a GoHighLevel live chat', 'Create a contact in a CRM'], provider: 'api_key', add: 'api-key' },
   { key: 'webhook', name: 'Webhooks', icon: Webhook, tint: 'bg-surface-2 text-muted', what: 'Any system that can call a web address can start a workflow — website forms, payment systems…', examples: ['Website enquiry → sheet + email', 'Payment received → mark as paid'], builtIn: 'Built in — no connection needed. Add a Webhook Trigger to a workflow.' },
 ];
 

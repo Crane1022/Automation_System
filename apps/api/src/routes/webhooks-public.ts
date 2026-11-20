@@ -1,4 +1,5 @@
 import express, { Router } from 'express';
+import { TERMINAL_STATUSES } from '@widebed/shared';
 import type { AppContext } from '../context.js';
 import { ah } from '../middleware/errors.js';
 import { rateLimit } from '../middleware/rate-limit.js';
@@ -68,6 +69,17 @@ export function publicWebhookRouter(ctx: AppContext) {
         initiatedBy: null,
         idempotencyKey,
       });
+      // On Vercel without Redis the run happens inside this function, and Vercel pauses the function
+      // once it has answered. Keep the call open until the run ends (or the wait limit is reached).
+      const waitMs = ctx.config.webhookWaitMs;
+      if (waitMs > 0 && !result.deduplicated && ctx.executions.queue.mode === 'in-process') {
+        const until = Date.now() + waitMs;
+        while (Date.now() < until) {
+          const exec = await ctx.repos.executions.get(result.executionId);
+          if (!exec || TERMINAL_STATUSES.includes(exec.status)) break;
+          await new Promise((r) => setTimeout(r, 400));
+        }
+      }
       res.status(202).json({ executionId: result.executionId, deduplicated: result.deduplicated });
     }),
   );

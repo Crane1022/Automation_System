@@ -25,6 +25,8 @@ import {
   Webhook,
   Wrench,
   Box,
+  ListEnd,
+  BotMessageSquare,
 } from '@lucide/vue';
 import type { Component } from 'vue';
 
@@ -55,6 +57,8 @@ const map: Record<string, Component> = {
   layers: Layers,
   'globe-lock': GlobeLock,
   sparkles: Sparkles,
+  'list-end': ListEnd,
+  'bot-message-square': BotMessageSquare,
 };
 
 export const iconFor = (name: string): Component => map[name] ?? Box;

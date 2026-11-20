@@ -321,6 +321,17 @@
       "collectionGroup": "images",
       "fieldPath": "data",
       "indexes": []
+    },
+    {
+      "collectionGroup": "workflowChatMemory",
+      "fieldPath": "expireAt",
+      "ttl": true,
+      "indexes": []
+    },
+    {
+      "collectionGroup": "workflowChatMemory",
+      "fieldPath": "turns",
+      "indexes": []
     }
   ]
 }

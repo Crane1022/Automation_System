@@ -82,6 +82,14 @@ const schema = z.object({
   CRON_WAIT_SECONDS: z.coerce.number().int().min(0).max(800).default(240),
 
   WEBHOOK_MAX_BODY_BYTES: z.coerce.number().int().default(1024 * 1024),
+  /**
+   * On Vercel without Redis: how long a webhook call stays open while its run finishes (e.g. a
+   * chatbot reply). Vercel pauses a function once it has answered, which would leave the run stuck.
+   * 0 = answer at once. Ignored when a worker (Redis) runs the jobs.
+   */
+  WEBHOOK_WAIT_SECONDS: z.coerce.number().int().min(0).max(300).default(25),
+  /** Set by Vercel itself. */
+  VERCEL: z.string().optional(),
   RATE_LIMIT_PER_MINUTE: z.coerce.number().int().default(300),
   WEBHOOK_RATE_LIMIT_PER_MINUTE: z.coerce.number().int().default(120),
 });

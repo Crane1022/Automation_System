@@ -53,8 +53,35 @@ export interface AgentRunResult {
   files: { fileId: string; name: string; size: number }[];
 }
 
+/** One message of a remembered chatbot conversation. */
+export interface ChatTurn {
+  role: 'user' | 'assistant';
+  text: string;
+  at: string;
+}
+
+/** Remembered conversations of chatbot nodes, kept per workflow and conversation id. */
+export interface ChatMemoryAccess {
+  load(conversationId: string): Promise<ChatTurn[]>;
+  save(conversationId: string, turns: ChatTurn[]): Promise<void>;
+  clear(conversationId: string): Promise<void>;
+}
+
+/** An API key connection, for the HTTP Request node only. */
+export interface ApiKeyAccess {
+  name: string;
+  headerName: string;
+  value: string;
+  /** Hosts the key may be sent to (and their sub-domains). */
+  allowedDomains: string[];
+}
+
 export interface NodeServices {
   http: SafeHttpClient;
+  /** API key connection: header name + value, and where it may be sent. */
+  apiKey?: (credentialId: string) => Promise<ApiKeyAccess>;
+  /** Conversation memory for chatbot nodes (scoped to this workflow by the platform). */
+  chatMemory?: ChatMemoryAccess;
   /** Firestore of an outside project, restricted to the credential's allowed collections. */
   firestore?: (credentialId: string) => Promise<FirestoreAccess>;
   /** Fresh Google access token for a connected Google account. */

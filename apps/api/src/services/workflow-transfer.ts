@@ -46,7 +46,12 @@ export class ImportError extends Error {}
 /* ================================================================== export */
 
 export function exportWorkflow(wf: Workflow, credentials: Credential[]): ExportFile {
-  const used = new Set(wf.draftDefinition.nodes.map((n) => n.credentialId).filter(Boolean));
+  const used = new Set<string>();
+  for (const n of wf.draftDefinition.nodes) {
+    if (n.credentialId) used.add(n.credentialId);
+    // Connection fields inside the config (e.g. the AI Chatbot's Google account, HTTP "Sign in with").
+    for (const v of Object.values(n.config ?? {})) if (typeof v === 'string' && v.startsWith('cred')) used.add(v);
+  }
   return {
     format: EXPORT_FORMAT,
     formatVersion: 1,
@@ -69,8 +74,22 @@ export function detectFormat(file: unknown): 'widebed' | 'n8n' {
  * Re-links credentials by id, or by name + type, among the connections the importing
  * user can see. Anything else is cleared and reported.
  */
-export function relinkCredentials(definition: WorkflowDefinition, refs: ExportFile['credentials'], visible: Credential[], report: ImportReport, providerOf: (type: string) => string | undefined) {
+export function relinkCredentials(
+  definition: WorkflowDefinition,
+  refs: ExportFile['credentials'],
+  visible: Credential[],
+  report: ImportReport,
+  providerOf: (type: string) => string | undefined,
+  credentialFieldsOf: (type: string) => { key: string; provider: string }[] = () => [],
+) {
   for (const node of definition.nodes) {
+    for (const f of credentialFieldsOf(node.type)) {
+      const id = typeof node.config?.[f.key] === 'string' ? String(node.config[f.key]) : '';
+      const ref = refs.find((r) => r.credentialId === id);
+      const match = id ? visible.find((c) => c.credentialId === id && c.provider === f.provider) ?? (ref ? visible.find((c) => c.name === ref.name && c.provider === f.provider) : undefined) : undefined;
+      node.config = { ...node.config, [f.key]: match ? match.credentialId : '' };
+      if (!match && id && !report.needsCredential.includes(node.name)) report.needsCredential.push(node.name);
+    }
     const provider = providerOf(node.type);
     if (!provider) {
       delete node.credentialId;
@@ -141,6 +160,8 @@ export function convertValue(value: unknown, warn: (msg: string) => void, where:
     if (lit.ok) return typeof lit.value === 'string' ? lit.value : JSON.stringify(lit.value);
     const before = e;
     e = e
+      .replace(/^\$(?:now|today)\.(?:format|toFormat)\(\s*(['"])yyyy-MM-dd\1\s*\)$/, '$today')
+      .replace(/^\$now\.toISO\(\)$/, '$now')
       .replace(/\$\(\s*(['"])(.+?)\1\s*\)\.(?:item|first\(\)|last\(\)|all\(\)\[0\])\.json/g, (_m, _q, name) => `$node["${name}"].json`)
       .replace(/\$node\[\s*(['"])(.+?)\1\s*\]\.json/g, (_m, _q, name) => `$node["${name}"].json`)
       .replace(/^\$input\.(?:item|first\(\))\.json/, '$json');
@@ -337,7 +358,81 @@ function sheetsFrom(p: any, cv: (v: unknown, field: string) => unknown, warn: (m
   }
 }
 
-function convertNode(n: N8nNode, timezone: string, warn: (m: string) => void): Converted | { unsupported: string } {
+/** AI sub-nodes (model, memory, tools) attached to one n8n AI Agent. */
+interface AgentParts {
+  model?: N8nNode;
+  memory?: N8nNode;
+  tools: N8nNode[];
+  other: N8nNode[];
+}
+
+const shortType = (t: string) => t.replace(/^@n8n\/n8n-nodes-langchain\./, 'langchain.').replace(/^n8n-nodes-base\./, '');
+
+/** Where a Google Sheets node points: the link and the tab, like the Sheets nodes use them. */
+function sheetLocation(p: any): { spreadsheet: string; sheet: string } {
+  const doc = rl(p.documentId ?? p.sheetId);
+  const spreadsheet = doc.mode === 'url' || /^https?:/.test(doc.value) ? doc.value : doc.url ?? doc.value;
+  const tab = rl(p.sheetName ?? p.range);
+  let sheet = '';
+  if (tab.name) sheet = tab.name;
+  else if (tab.mode === 'name') sheet = tab.value;
+  else if (/^\d+$/.test(tab.value)) sheet = `gid=${tab.value}`;
+  else sheet = tab.value.replace(/!.*$/, '');
+  return { spreadsheet, sheet };
+}
+
+/** n8n AI Agent (+ chat model, memory and Google Sheets tools) → one AI Chatbot node. */
+function chatbotFrom(n: N8nNode, parts: AgentParts | undefined, cv: (v: unknown, field: string) => unknown, warn: (m: string) => void, needs: () => void): Converted {
+  const p = n.parameters ?? {};
+  const message = p.promptType === 'define' || p.text ? cv(p.text ?? '', 'Prompt') : '{{ $json.chatInput }}';
+  const instructions = cv(p.options?.systemMessage ?? p.messages?.messageValues?.find?.((m: any) => m?.type === 'SystemMessagePromptTemplate')?.message ?? '', 'System message');
+  needs(); // the AI connection
+  const notes: string[] = [];
+  const model = parts?.model;
+  if (!model) notes.push('No chat model was connected in n8n — choose an AI connection.');
+  else {
+    const name = String(model.parameters?.modelName ?? model.parameters?.model?.value ?? model.parameters?.model ?? '').replace(/^models\//, '');
+    notes.push(`Choose an AI connection (Credentials → AI service) — n8n used “${model.name}”${name ? ` with model ${name}` : ''}.`);
+  }
+
+  let conversationId: unknown = '';
+  let memoryMessages = 0;
+  const mem = parts?.memory;
+  if (mem) {
+    const mp = mem.parameters ?? {};
+    conversationId = mp.sessionIdType === 'customKey' ? cv(mp.sessionKey ?? '', 'Session key') : '{{ $json.sessionId }}';
+    memoryMessages = Math.min(100, Math.max(2, Number(mp.contextWindowLength ?? 5) * 2));
+    if (!/memoryBufferWindow$/.test(mem.type)) notes.push(`Memory “${mem.name}” (${shortType(mem.type)}) is replaced by the platform’s own conversation memory.`);
+  }
+
+  const lookups: { name: string; spreadsheet: string; sheet: string; description: string }[] = [];
+  for (const t of parts?.tools ?? []) {
+    const tt = shortType(t.type);
+    if (tt === 'googleSheetsTool' || tt === 'googleSheets') {
+      const tp = t.parameters ?? {};
+      const op = String(tp.operation ?? 'read');
+      if (!['read', 'getAll', 'lookup'].includes(op)) {
+        notes.push(`Tool “${t.name}” writes to Google Sheets (${op}) — the chatbot can only read sheets, so it was left out.`);
+        continue;
+      }
+      const loc = sheetLocation(tp);
+      const description = [tp.toolDescription, t.notes].filter((x) => typeof x === 'string' && x.trim()).join(' ').trim();
+      lookups.push({ name: t.name.trim().slice(0, 60), spreadsheet: String(cv(loc.spreadsheet, 'Document') ?? ''), sheet: String(cv(loc.sheet, 'Sheet') ?? ''), description });
+    } else {
+      notes.push(`Tool “${t.name}” (${tt}) has no equivalent in the AI Chatbot yet and was left out.`);
+    }
+  }
+  if (lookups.length) notes.push('Choose the “Google account for look-ups”.');
+  for (const o of parts?.other ?? []) notes.push(`“${o.name}” (${shortType(o.type)}) has no equivalent and was left out.`);
+  if (p.hasOutputParser) notes.push('The n8n “output parser” is not supported; the reply is plain text.');
+  return {
+    type: 'ai.chatbot',
+    config: { message, instructions, conversationId, memoryMessages, googleConnection: '', lookups, maxLookups: lookups.length ? 4 : 0, saveAs: 'output' },
+    notes,
+  };
+}
+
+function convertNode(n: N8nNode, timezone: string, warn: (m: string) => void, sub?: AgentParts, needs: () => void = () => {}): Converted | { unsupported: string } {
   const p = n.parameters ?? {};
   const cv = (v: unknown, field: string) => convertValue(v, warn, `${n.name} › ${field}`);
   const t = n.type.replace(/^@n8n\/n8n-nodes-langchain\./, 'langchain.').replace(/^n8n-nodes-base\./, '');
@@ -356,23 +451,45 @@ function convertNode(n: N8nNode, timezone: string, warn: (m: string) => void): C
     }
     case 'httpRequest': {
       const kv = (list: any) => (Array.isArray(list) ? list.map((x: any) => ({ key: String(x.name ?? ''), value: cv(x.value, 'parameter') })) : []);
-      const body = p.sendBody ? (p.specifyBody === 'json' ? cv(p.jsonBody ?? '{}', 'body') : JSON.stringify(Object.fromEntries(kv(p.bodyParameters?.parameters).map((x: any) => [x.key, x.value])))) : '';
+      const jsonBody = p.specifyBody === 'json';
+      const fieldsBody = p.sendBody && !jsonBody && (!p.contentType || p.contentType === 'json');
+      const body = p.sendBody && !fieldsBody ? (jsonBody ? cv(p.jsonBody ?? '{}', 'body') : JSON.stringify(Object.fromEntries(kv(p.bodyParameters?.parameters).map((x: any) => [x.key, x.value])))) : '';
       const headers = kv(p.headerParameters?.parameters).filter((h: any) => !/^(authorization|proxy-authorization|cookie|x-api-key|api-key)$/i.test(h.key));
-      if (p.authentication && p.authentication !== 'none') warn(`${n.name}: authentication was removed — connect it with a credential when that becomes available.`);
+      const auth = String(p.authentication ?? 'none');
+      const keyAuth = auth === 'genericCredentialType' && /^(httpHeaderAuth|httpBearerAuth|httpQueryAuth)$/.test(String(p.genericAuthType ?? ''));
+      let host = '';
+      try {
+        host = new URL(String(p.url ?? '').replace(/^=/, '')).hostname;
+      } catch {
+        /* expression URL */
+      }
+      if (keyAuth) {
+        warn(`${n.name}: create an “API key / token” connection${host ? ` for ${host}` : ''} (Credentials) with the same header and key as in n8n, then choose it in “Sign in with”.`);
+        needs();
+      } else if (auth !== 'none') {
+        warn(`${n.name}: the n8n sign-in “${p.genericAuthType ?? p.nodeCredentialType ?? auth}” was removed. If the API needs a key, use an “API key / token” connection in “Sign in with”.`);
+      }
       return {
         type: 'data.httpRequest',
         config: {
           method: String(p.method ?? 'GET').toUpperCase(),
           url: cv(p.url ?? '', 'url'),
+          auth: '',
           query: p.sendQuery ? kv(p.queryParameters?.parameters) : [],
           headers: p.sendHeaders ? headers : [],
-          bodyType: p.sendBody ? (p.specifyBody === 'json' || !p.contentType || p.contentType === 'json' ? 'json' : 'text') : 'none',
+          bodyType: !p.sendBody ? 'none' : fieldsBody ? 'fields' : jsonBody || p.contentType === 'json' ? 'json' : 'text',
+          bodyFields: fieldsBody ? kv(p.bodyParameters?.parameters).filter((x: any) => x.key) : [],
           body: typeof body === 'string' ? body : JSON.stringify(body),
           timeoutMs: Number(p.options?.timeout ?? 15000),
           failOnHttpError: true,
         },
       };
     }
+    case 'limit':
+      return { type: 'logic.limit', config: { maxItems: Math.max(1, Number(p.maxItems ?? 1) || 1), keep: p.keep === 'lastItems' ? 'last' : 'first' } };
+    case 'langchain.agent':
+    case 'langchain.chainLlm':
+      return chatbotFrom(n, sub, cv, warn, needs);
     case 'if': {
       const c = convertConditions(p, (v) => cv(v, 'condition'));
       return c ? { type: 'logic.if', config: c, outputs: ['true', 'false'] } : { unsupported: 'Uses an IF condition type that cannot be converted' };
@@ -457,7 +574,7 @@ function convertNode(n: N8nNode, timezone: string, warn: (m: string) => void): C
     case 'googleSheets':
       return sheetsFrom(p, cv, warn, n.name);
     default:
-      return { unsupported: t.startsWith('langchain.') ? 'AI nodes arrive in Phase 3' : 'No equivalent node yet' };
+      return { unsupported: t.startsWith('langchain.') ? 'This AI node has no equivalent yet (AI Agents become an “AI Chatbot” step)' : 'No equivalent node yet' };
   }
 }
 
@@ -465,15 +582,44 @@ export function convertN8n(file: any): ImportResult {
   const report: ImportReport = { source: 'n8n', converted: [], unsupported: [], warnings: [], needsCredential: [] };
   const warn = (m: string) => report.warnings.push(m);
   const timezone = typeof file?.settings?.timezone === 'string' ? file.settings.timezone : 'Asia/Kuala_Lumpur';
-  const n8nNodes: N8nNode[] = (file.nodes ?? []).filter((n: any) => n?.type && n.type !== 'n8n-nodes-base.stickyNote');
-  if (!n8nNodes.length) throw new ImportError('The n8n file has no nodes');
+  const allNodes: N8nNode[] = (file.nodes ?? []).filter((n: any) => n?.type && n.type !== 'n8n-nodes-base.stickyNote');
+  if (!allNodes.length) throw new ImportError('The n8n file has no nodes');
+
+  // AI sub-nodes (chat model, memory, tools) connect to an AI Agent with ai_* connections
+  // instead of "main". They become part of the agent's AI Chatbot step, not steps of their own.
+  const parts = new Map<string, AgentParts>();
+  const absorbed = new Map<string, string>();
+  const byN8nName = new Map(allNodes.map((n) => [n.name, n]));
+  for (const [sourceName, types] of Object.entries<any>(file.connections ?? {})) {
+    for (const [kind, outs] of Object.entries<any>(types ?? {})) {
+      if (kind === 'main' || !kind.startsWith('ai_')) continue;
+      const source = byN8nName.get(sourceName);
+      if (!source) continue;
+      for (const t of (outs ?? []).flat()) {
+        if (!t?.node || !byN8nName.has(t.node)) continue;
+        const part = parts.get(t.node) ?? { tools: [], other: [] };
+        if (kind === 'ai_languageModel') part.model ??= source;
+        else if (kind === 'ai_memory') part.memory ??= source;
+        else if (kind === 'ai_tool') part.tools.push(source);
+        else part.other.push(source);
+        parts.set(t.node, part);
+        absorbed.set(sourceName, t.node);
+      }
+    }
+  }
+  const n8nNodes = allNodes.filter((n) => !absorbed.has(n.name));
+  for (const n of allNodes) {
+    const into = absorbed.get(n.name);
+    if (into) report.converted.push({ name: n.name, from: n.type, to: `part of “${into}”` });
+  }
 
   const nodes: WorkflowNode[] = [];
   const byName = new Map<string, { node: WorkflowNode; outputs: string[]; inputs: string[] }>();
   const triggerTypesSeen = new Set<string>();
 
   n8nNodes.forEach((n, i) => {
-    const res = convertNode(n, timezone, warn);
+    let needsConnection = false;
+    const res = convertNode(n, timezone, warn, parts.get(n.name), () => (needsConnection = true));
     const id = safeId(n.id ?? '', i);
     // Our nodes are about twice as wide as n8n's, so spread the layout horizontally.
     const position = { x: Math.round((n.position?.[0] ?? i * 260) * 1.6), y: Math.round((n.position?.[1] ?? 0) * 1.1) };
@@ -516,7 +662,14 @@ export function convertN8n(file: any): ImportResult {
     }
     if (n.disabled) node.disabled = true;
     if (n.notes) node.notes = String(n.notes).slice(0, 2000);
-    if (n.credentials && Object.keys(n.credentials).length && node.type !== 'util.unsupported') {
+    if ((n as any).executeOnce && node.type !== 'util.unsupported') {
+      const next = (file.connections?.[n.name]?.main?.[0] ?? []).map((t: any) => byN8nName.get(t?.node)?.type ?? '');
+      if (!next.length || !next.every((t: string) => /\.limit$/.test(t))) warn(`${n.name}: “Execute once” is not a setting here — add a Limit step (keep 1) after it.`);
+    }
+    if (needsConnection && node.type !== 'util.unsupported') {
+      node.credentialId = null;
+      if (!report.needsCredential.includes(n.name)) report.needsCredential.push(n.name);
+    } else if (n.credentials && Object.keys(n.credentials).length && node.type !== 'util.unsupported') {
       node.credentialId = null;
       report.needsCredential.push(n.name);
     }
@@ -542,6 +695,9 @@ export function convertN8n(file: any): ImportResult {
       }
     });
   }
+  // A trigger outputs one item, so "$('Webhook').item" and "first item" are the same — no need to warn.
+  const triggers = allNodes.filter((n) => /(?:Trigger|\.webhook|\.cron)$/.test(n.type)).map((n) => n.name);
+  report.warnings = report.warnings.filter((w) => !(w.includes('now reads the FIRST item') && triggers.some((t) => w.includes(`$('${t}').item`) || w.includes(`$("${t}").item`))));
   if (file.active) warn('The n8n workflow was active. Imported workflows start inactive: publish and activate when ready.');
 
   return {

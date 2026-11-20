@@ -258,6 +258,18 @@ export interface NotificationsRepo {
   markAllRead(userId: string): Promise<number>;
 }
 
+/** Remembered conversations of AI Chatbot nodes: workflowChatMemory/{id}. Expire after 90 days without use. */
+export interface StoredChatMemory {
+  workflowId: string;
+  turns: { role: 'user' | 'assistant'; text: string; at: string }[];
+  updatedAt: string;
+}
+export interface ChatMemoryRepo {
+  get(id: string): Promise<StoredChatMemory | null>;
+  set(id: string, value: StoredChatMemory): Promise<void>;
+  delete(id: string): Promise<void>;
+}
+
 export interface SettingsRepo {
   get<T = unknown>(key: string): Promise<T | null>;
   set(key: string, value: unknown): Promise<void>;
@@ -309,6 +321,7 @@ export interface Repositories {
   knowledge: KnowledgeRepo;
   usage: UsageRepo;
   settings: SettingsRepo;
+  chatMemory: ChatMemoryRepo;
   webhooks: WebhooksRepo;
   audit: AuditRepo;
   credentials: CredentialsRepo;

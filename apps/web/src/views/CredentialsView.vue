@@ -3,7 +3,7 @@ import Skeleton from '@/components/ui/Skeleton.vue';
 import PageHeader from '@/components/ui/PageHeader.vue';
 import { computed, onMounted, ref } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
-import { Bot, Copy, Database, ExternalLink, GlobeLock, KeyRound, Mail, Plug, Radio, RefreshCw, Trash2, Upload } from '@lucide/vue';
+import { Bot, Copy, Database, ExternalLink, GlobeLock, KeyRound, KeySquare, Mail, Plug, Radio, RefreshCw, Trash2, Upload } from '@lucide/vue';
 import type { AiService, Credential } from '@widebed/shared';
 import { AI_SERVICE_INFO, AI_SERVICES, PROVIDER_LABELS } from '@widebed/shared';
 import { api } from '@/lib/api';
@@ -22,7 +22,41 @@ const router = useRouter();
 const canManage = computed(() => auth.can('credential.manage'));
 const busy = ref<string | null>(null);
 
-const icons = { firebase_service_account: Database, google_oauth: Mail, event_source: Radio, ai_provider: Bot, website_login: GlobeLock } as const;
+const icons = { firebase_service_account: Database, google_oauth: Mail, event_source: Radio, ai_provider: Bot, website_login: GlobeLock, api_key: KeySquare } as const;
+
+/* ---------- API key / token (HTTP Request "Sign in with") ---------- */
+const showKey = ref(false);
+const keyEditing = ref<Credential | null>(null);
+const keyForm = ref({ name: '', department: '', headerName: 'Authorization', bearer: true, value: '', sites: '' });
+function openKey(c?: Credential) {
+  keyEditing.value = c ?? null;
+  keyForm.value = c
+    ? { name: c.name, department: c.department ?? '', headerName: c.details.headerName ?? 'Authorization', bearer: false, value: '', sites: (c.details.allowedDomains ?? []).join(', ') }
+    : { name: '', department: '', headerName: 'Authorization', bearer: true, value: '', sites: '' };
+  showKey.value = true;
+}
+/** "Bearer " is added for Authorization headers unless the key already has a word in front (e.g. "Bearer …", "Basic …"). */
+const keyValue = () => {
+  const v = keyForm.value.value.trim();
+  if (!v) return '';
+  return keyForm.value.bearer && /^authorization$/i.test(keyForm.value.headerName.trim()) && !/^\w+\s+\S/.test(v) ? `Bearer ${v}` : v;
+};
+async function saveKey() {
+  busy.value = 'key';
+  const f = keyForm.value;
+  const body = { headerName: f.headerName.trim() || 'Authorization', allowedDomains: f.sites.split(/[\s,]+/).map((x) => x.trim()).filter(Boolean), ...(keyValue() ? { value: keyValue() } : {}) };
+  try {
+    if (keyEditing.value) await api(`/credentials/${keyEditing.value.credentialId}`, { method: 'PATCH', body });
+    else await api('/credentials/api-key', { method: 'POST', body: { ...body, name: f.name, department: f.department.trim() || null } });
+    toast(keyEditing.value ? 'API key updated' : 'API key saved', 'success');
+    showKey.value = false;
+    store.load(true);
+  } catch (err) {
+    toastError(err);
+  } finally {
+    busy.value = null;
+  }
+}
 
 /* ---------- Website login (assistant browser) ---------- */
 const showSite = ref(false);
@@ -251,6 +285,7 @@ onMounted(async () => {
     else if (add === 'firebase') showFirebase.value = true;
     else if (add === 'event') showEvent.value = true;
     else if (add === 'website') openSite();
+    else if (add === 'api-key') openKey();
     else if ((AI_SERVICES as readonly string[]).includes(add)) (pickService(add as AiService), (showAi.value = true));
     router.replace('/credentials');
   }
@@ -271,6 +306,7 @@ onMounted(async () => {
         <button class="btn-secondary" @click="showEvent = true"><Radio class="size-4" />Event source</button>
         <button class="btn-secondary" @click="showAi = true"><Bot class="size-4" />AI service</button>
         <button class="btn-secondary" @click="openSite()"><GlobeLock class="size-4" />Website login</button>
+        <button class="btn-secondary" @click="openKey()"><KeySquare class="size-4" />API key / token</button>
       </div>
     </PageHeader>
 
@@ -293,6 +329,7 @@ onMounted(async () => {
               <template v-if="c.details.keyPrefix"> · key {{ c.details.keyPrefix }}…</template>
               <template v-if="c.details.aiService"> · {{ AI_SERVICE_INFO[c.details.aiService].label }} · model {{ c.details.model }} · key …{{ c.details.keyEnding }}</template>
               <template v-if="c.provider === 'website_login'"> · {{ c.details.allowedDomains?.join(', ') }} · user {{ c.details.usernameHint }}</template>
+              <template v-if="c.provider === 'api_key'"> · {{ c.details.headerName }} → {{ c.details.allowedDomains?.join(', ') }}<template v-if="c.details.keyEnding"> · key …{{ c.details.keyEnding }}</template></template>
             </div>
             <div v-if="c.lastTestedAt" class="text-[11px] mt-0.5" :class="c.status === 'error' ? 'text-bad' : 'text-subtle'">Tested {{ timeAgo(c.lastTestedAt) }}: {{ c.lastTestResult }}</div>
             <div v-if="needsSheets(c)" class="text-[12px] mt-1 text-warn">Click <b>Reconnect</b> to also allow Google Sheets for this account.</div>
@@ -305,6 +342,7 @@ onMounted(async () => {
             <button v-if="c.provider === 'firebase_service_account'" class="btn-ghost h-7 text-[12px]" @click="openEdit(c)">Access</button>
             <button v-if="c.provider === 'ai_provider'" class="btn-ghost h-7 text-[12px]" @click="openAiEdit(c)">Edit</button>
             <button v-if="c.provider === 'website_login'" class="btn-ghost h-7 text-[12px]" @click="openSite(c)">Edit</button>
+            <button v-if="c.provider === 'api_key'" class="btn-ghost h-7 text-[12px]" @click="openKey(c)">Edit</button>
             <button v-if="c.provider === 'event_source'" class="btn-ghost h-7 text-[12px]" @click="rotate(c)">New key</button>
             <button class="btn-ghost h-7 text-[12px] text-bad hover:bg-bad-soft" aria-label="Delete" @click="remove(c)"><Trash2 class="size-3.5" /></button>
           </div>
@@ -456,6 +494,36 @@ onMounted(async () => {
       <template #footer>
         <button class="btn-secondary" @click="showSite = false">Cancel</button>
         <button class="btn-primary" form="site-form" type="submit" :disabled="busy === 'site'"><GlobeLock class="size-4" />Save</button>
+      </template>
+    </Modal>
+
+    <!-- API key / token -->
+    <Modal v-if="showKey" :title="keyEditing ? `Edit ${keyEditing.name}` : 'Save an API key or token'" width="560px" @close="showKey = false">
+      <form id="key-form" class="space-y-4" @submit.prevent="saveKey">
+        <p class="text-[12.5px] text-muted -mt-1">For <b>HTTP Request</b> steps that call another system (e.g. GoHighLevel). Choose it in the step’s <i>Sign in with</i>. The key is encrypted and never shown again.</p>
+        <div v-if="!keyEditing" class="grid grid-cols-2 gap-3">
+          <div><label class="label">Name</label><input v-model="keyForm.name" class="input" required maxlength="80" placeholder="GoHighLevel" /></div>
+          <div><label class="label">Department (empty = all)</label><input v-model="keyForm.department" class="input" /></div>
+        </div>
+        <div>
+          <label class="label">Websites it may be sent to</label>
+          <input v-model="keyForm.sites" class="input font-mono text-[12px]" required placeholder="services.leadconnectorhq.com" />
+          <p class="text-[11px] text-subtle mt-1">The key is never sent anywhere else, even if a step’s address is changed by mistake.</p>
+        </div>
+        <div class="grid grid-cols-[1fr_2fr] gap-3">
+          <div><label class="label">Header name</label><input v-model="keyForm.headerName" class="input font-mono text-[12px]" maxlength="64" placeholder="Authorization" /></div>
+          <div>
+            <label class="label">Key or token</label>
+            <input v-model="keyForm.value" type="password" class="input font-mono" :required="!keyEditing" autocomplete="off" :placeholder="keyEditing ? 'leave empty to keep' : 'pit-…'" />
+          </div>
+        </div>
+        <label v-if="/^authorization$/i.test(keyForm.headerName.trim())" class="flex items-center gap-2 text-[13px]">
+          <input v-model="keyForm.bearer" type="checkbox" class="accent-[var(--wb-brand)]" />Add “Bearer ” in front (most APIs, e.g. GoHighLevel private integration tokens)
+        </label>
+      </form>
+      <template #footer>
+        <button class="btn-secondary" @click="showKey = false">Cancel</button>
+        <button class="btn-primary" form="key-form" type="submit" :disabled="busy === 'key'"><KeySquare class="size-4" />Save</button>
       </template>
     </Modal>
 

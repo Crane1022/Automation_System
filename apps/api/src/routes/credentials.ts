@@ -65,6 +65,22 @@ export function credentialsRouter(ctx: AppContext) {
     res.status(201).json(c);
   }));
 
+  r.post('/api-key', ah(async (req, res) => {
+    manage(req);
+    const body = z
+      .object({
+        name,
+        department,
+        headerName: z.string().trim().max(64).default('Authorization'),
+        value: z.string().min(1, 'Paste the key or token').max(4000),
+        allowedDomains: z.array(z.string().max(200)).max(10).default([]),
+      })
+      .parse(req.body);
+    const c = await svc.createApiKey(req.user!, body);
+    await ctx.audit({ actorId: req.user!.uid, action: 'credential.create', resourceType: 'credential', resourceId: c.credentialId, metadata: { provider: c.provider, allowedDomains: c.details.allowedDomains } });
+    res.status(201).json(c);
+  }));
+
   r.post('/event-source', ah(async (req, res) => {
     manage(req);
     const body = z.object({ name }).parse(req.body);
@@ -103,8 +119,13 @@ export function credentialsRouter(ctx: AppContext) {
         username: z.string().trim().max(200).optional(),
         password: z.string().max(500).optional(),
         selectors,
+        headerName: z.string().trim().max(64).optional(),
+        value: z.string().max(4000).optional(),
       })
       .parse(req.body);
+    if (c.provider === 'api_key' && (body.headerName || body.value || body.allowedDomains)) {
+      await svc.updateApiKey(c.credentialId, { headerName: body.headerName, value: body.value, allowedDomains: body.allowedDomains });
+    }
     if (c.provider === 'website_login' && (body.loginUrl || body.allowedDomains || body.username || body.password || body.selectors)) {
       await svc.updateWebsiteLogin(c.credentialId, { loginUrl: body.loginUrl, allowedDomains: body.allowedDomains, username: body.username, password: body.password, selectors: body.selectors });
     }
@@ -115,7 +136,7 @@ export function credentialsRouter(ctx: AppContext) {
     if (body.name || body.department !== undefined) {
       await ctx.repos.credentials.update(c.credentialId, { ...(body.name ? { name: body.name } : {}), ...(body.department !== undefined ? { department: body.department } : {}) });
     }
-    await ctx.audit({ actorId: req.user!.uid, action: 'credential.update', resourceType: 'credential', resourceId: c.credentialId, metadata: { fields: Object.keys(body).filter((k) => k !== 'apiKey' && k !== 'password').concat(body.apiKey ? ['apiKey (replaced)'] : [], body.password ? ['password (replaced)'] : []) } });
+    await ctx.audit({ actorId: req.user!.uid, action: 'credential.update', resourceType: 'credential', resourceId: c.credentialId, metadata: { fields: Object.keys(body).filter((k) => k !== 'apiKey' && k !== 'password' && k !== 'value').concat(body.apiKey ? ['apiKey (replaced)'] : [], body.password ? ['password (replaced)'] : [], body.value ? ['value (replaced)'] : []) } });
     res.json(await ctx.repos.credentials.get(c.credentialId));
   }));
 
