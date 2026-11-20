@@ -205,3 +205,80 @@ export const httpRequest = defineNode({
     return { outputs: { main: out } };
   },
 });
+
+/* --------------------------------------------------------- Respond to Webhook */
+
+export const respondWebhook = defineNode({
+  descriptor: {
+    type: 'comm.respondWebhook',
+    version: 1,
+    displayName: 'Respond to Webhook',
+    description: 'Send an answer back to whoever called the Webhook Trigger — e.g. the bot’s reply to a website chat box.',
+    category: 'communication',
+    icon: 'reply',
+    isTrigger: false,
+    inputs: [{ id: 'main' }],
+    outputs: [{ id: 'main' }],
+    fields: [
+      {
+        key: 'bodyType',
+        label: 'Answer with',
+        type: 'select',
+        default: 'fields',
+        options: [
+          { label: 'Fields (JSON, easiest)', value: 'fields' },
+          { label: 'Plain text', value: 'text' },
+        ],
+      },
+      {
+        key: 'bodyFields',
+        label: 'Fields',
+        type: 'keyValue',
+        expressions: true,
+        default: [{ key: 'reply', value: '{{ $json.output }}' }],
+        keyPlaceholder: 'Field, e.g. reply',
+        valuePlaceholder: '{{ $json.output }}',
+        showIf: { key: 'bodyType', equals: ['fields'] },
+        help: 'The website chat box shows the field called “reply”.',
+      },
+      { key: 'text', label: 'Text', type: 'text', expressions: true, default: '{{ $json.output }}', showIf: { key: 'bodyType', equals: ['text'] } },
+      { key: 'statusCode', label: 'Status code', type: 'number', default: 200, help: '200 = OK. Change only if the caller expects something else.' },
+    ],
+    inputSchema: { description: 'The first item is used for the answer.' },
+    outputSchema: { description: 'The same items, unchanged.' },
+    retryable: false,
+    available: true,
+    docs: [
+      '### Respond to Webhook',
+      'Works with a **Webhook Trigger** whose *Response* is “Wait and send back the reply”.',
+      'The caller (for example the website chat box) receives this answer. Only the first item is used, and only the first Respond step of a run counts.',
+      '',
+      '**Website chat box**: Fields → `reply` = `{{ $json.output }}` (the AI Chatbot’s answer).',
+    ].join('\n'),
+  },
+  configSchema: z.object({
+    bodyType: z.enum(['fields', 'text']).default('fields'),
+    bodyFields: keyValue,
+    text: z.string().default(''),
+    statusCode: z.coerce.number().int().min(200, 'Use a status code between 200 and 599').max(599, 'Use a status code between 200 and 599').default(200),
+  }),
+  async execute(ctx) {
+    const item = ctx.items[0] ?? { json: {} };
+    const c = ctx.config;
+    let body: unknown;
+    if (c.bodyType === 'text') {
+      const v = ctx.resolve(c.text, item, 0);
+      body = v === null || v === undefined ? '' : typeof v === 'object' ? JSON.stringify(v) : String(v);
+    } else {
+      const obj: Record<string, unknown> = {};
+      for (const f of c.bodyFields) {
+        const name = String(ctx.resolve(f.key, item, 0) ?? '').trim();
+        if (name) obj[name] = ctx.resolve(f.value, item, 0) ?? '';
+      }
+      body = obj;
+    }
+    if (ctx.services.respond) await ctx.services.respond({ status: c.statusCode, body, contentType: c.bodyType === 'text' ? 'text' : 'json' });
+    else ctx.log('Nobody is waiting for an answer (not started by a webhook)');
+    return { outputs: { main: ctx.items } };
+  },
+});

@@ -447,7 +447,31 @@ function convertNode(n: N8nNode, timezone: string, warn: (m: string) => void, su
     case 'webhook': {
       const method = String(p.httpMethod ?? 'GET').toUpperCase();
       const notes = ['n8n webhook URLs do not carry over: publish this workflow to get a new URL and update the caller.'];
-      return { type: 'trigger.webhook', config: { method: ['POST', 'GET', 'PUT', 'PATCH', 'DELETE'].includes(method) ? method : 'POST', requireSignature: false }, notes };
+      const reply = p.responseMode === 'responseNode' || p.responseMode === 'lastNode';
+      if (p.responseMode === 'lastNode') notes.push('n8n answered with the last step’s data — add a “Respond to Webhook” step at the end to choose the answer.');
+      return { type: 'trigger.webhook', config: { method: ['POST', 'GET', 'PUT', 'PATCH', 'DELETE'].includes(method) ? method : 'POST', requireSignature: false, responseMode: reply ? 'reply' : 'accepted', allowedOrigins: '' }, notes };
+    }
+    case 'respondToWebhook': {
+      const kind = String(p.respondWith ?? 'firstIncomingItem');
+      const statusCode = Number(p.options?.responseCode ?? 200) || 200;
+      if (kind === 'text') return { type: 'comm.respondWebhook', config: { bodyType: 'text', bodyFields: [], text: cv(p.responseBody ?? '', 'Response body'), statusCode } };
+      if (kind === 'json') {
+        // Simple JSON objects become fields; anything else is kept as text for the user to check.
+        const raw = String(p.responseBody ?? '').replace(/^=/, '');
+        try {
+          const obj = JSON.parse(raw.replace(/\{\{[\s\S]*?\}\}/g, (m) => JSON.stringify(m).slice(1, -1)));
+          if (obj && typeof obj === 'object' && !Array.isArray(obj)) {
+            return { type: 'comm.respondWebhook', config: { bodyType: 'fields', bodyFields: Object.entries(obj).map(([k, v]) => ({ key: k, value: cv(typeof v === 'string' && v.includes('{{') ? `=${v}` : v, `Response ${k}`) })), text: '', statusCode } };
+          }
+        } catch {
+          /* fall through */
+        }
+        warn(`${n.name}: the JSON answer could not be read as fields — it is sent as text; check it.`);
+        return { type: 'comm.respondWebhook', config: { bodyType: 'text', bodyFields: [], text: cv(p.responseBody ?? '', 'Response body'), statusCode } };
+      }
+      if (kind === 'noData') return { type: 'comm.respondWebhook', config: { bodyType: 'fields', bodyFields: [], text: '', statusCode } };
+      warn(`${n.name}: n8n answered with the whole item — now it answers with the fields you list (default: reply = {{ $json.output }}).`);
+      return { type: 'comm.respondWebhook', config: { bodyType: 'fields', bodyFields: [{ key: 'reply', value: '{{ $json.output }}' }], text: '', statusCode } };
     }
     case 'httpRequest': {
       const kv = (list: any) => (Array.isArray(list) ? list.map((x: any) => ({ key: String(x.name ?? ''), value: cv(x.value, 'parameter') })) : []);

@@ -20,7 +20,7 @@ export function scopeFilter(user: AppUser, f: ExecutionFilter): ExecutionFilter 
   return { ...f, initiatedBy: user.uid };
 }
 
-const publicExec = ({ triggerItems, triggerNodeId, definitionJson, untilNodeId, ...rest }: StoredExecution) => rest;
+const publicExec = ({ triggerItems, triggerNodeId, definitionJson, untilNodeId, webhookResponseJson, ...rest }: StoredExecution) => rest;
 
 export function executionsRouter(ctx: AppContext) {
   const r = Router();

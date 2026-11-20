@@ -80,6 +80,8 @@ export interface NodeServices {
   http: SafeHttpClient;
   /** API key connection: header name + value, and where it may be sent. */
   apiKey?: (credentialId: string) => Promise<ApiKeyAccess>;
+  /** Sets the answer a waiting webhook caller (e.g. a website chat box) receives. */
+  respond?: (res: { status: number; body: unknown; contentType: 'json' | 'text' }) => Promise<void>;
   /** Conversation memory for chatbot nodes (scoped to this workflow by the platform). */
   chatMemory?: ChatMemoryAccess;
   /** Firestore of an outside project, restricted to the credential's allowed collections. */

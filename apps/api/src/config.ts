@@ -88,6 +88,8 @@ const schema = z.object({
    * 0 = answer at once. Ignored when a worker (Redis) runs the jobs.
    */
   WEBHOOK_WAIT_SECONDS: z.coerce.number().int().min(0).max(300).default(25),
+  /** Webhooks set to "Wait and send back the reply" (chat boxes): the longest a caller waits. */
+  WEBHOOK_REPLY_SECONDS: z.coerce.number().int().min(1).max(120).default(30),
   /** Set by Vercel itself. */
   VERCEL: z.string().optional(),
   RATE_LIMIT_PER_MINUTE: z.coerce.number().int().default(300),

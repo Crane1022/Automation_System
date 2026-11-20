@@ -27,6 +27,7 @@ import {
   Box,
   ListEnd,
   BotMessageSquare,
+  Reply,
 } from '@lucide/vue';
 import type { Component } from 'vue';
 
@@ -59,6 +60,7 @@ const map: Record<string, Component> = {
   sparkles: Sparkles,
   'list-end': ListEnd,
   'bot-message-square': BotMessageSquare,
+  reply: Reply,
 };
 
 export const iconFor = (name: string): Component => map[name] ?? Box;

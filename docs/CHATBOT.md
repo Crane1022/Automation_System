@@ -35,6 +35,27 @@ Credentials → **API key / token**: name, websites it may be sent to (e.g. `ser
 header name (default `Authorization`) and the key. The key is encrypted; only its last 4 characters are shown.
 The HTTP Request step refuses to send it to any other website.
 
+## Chat box on your website
+
+1. Workflow: **Webhook Trigger** (Response: *Wait and send back the reply*, and your website under
+   *Websites that may call it*, e.g. `https://www.widebed.com`) → **AI Chatbot** (Message `{{ $json.body.message }}`,
+   Remember per `{{ $json.body.sessionId }}`) → **Respond to Webhook** (Fields: `reply` = `{{ $json.output }}`).
+   The template **“AI: chat box on your website”** has all of this ready.
+2. Publish + Active, copy the webhook URL.
+3. Click the Webhook step → copy the chat box code, paste the webhook URL into `data-webhook`, put it on the website before `</body>`:
+   ```html
+   <script src="https://YOUR-APP/chat-widget.js" data-webhook="https://YOUR-APP/hooks/TOKEN"
+           data-title="Widebed" data-welcome="Hi! How can we help with your stay?" data-color="#1f3a5f" defer></script>
+   ```
+   Optional: `data-subtitle`, `data-placeholder`, `data-position="left"`.
+
+The chat box sends `{ message, sessionId, page, title }` and shows the `reply` field. Each visitor gets their own
+`sessionId` (kept in the browser), so the bot remembers the conversation. Calls from websites that are not listed are
+refused (403). The caller waits up to `WEBHOOK_REPLY_SECONDS` (default 30). n8n *Respond to Webhook* steps import too.
+
+Note: the webhook URL is visible in the website's code, so anyone could call it. It is rate-limited per visitor
+(`WEBHOOK_RATE_LIMIT_PER_MINUTE`); keep a spending limit on your AI account.
+
 ## On Vercel (no Redis)
 
 Vercel pauses a function as soon as it has answered. A webhook run (the chatbot) would then stop halfway

@@ -306,6 +306,7 @@ export class ExecutionService {
     const { credentials, http, runCode, waitMaxMs } = this.deps;
     const dept = exec.department;
     const runner = this.agentRunner;
+    let answered = false;
     return {
       agent: runner ? (req) => runner(exec, req) : undefined,
       http,
@@ -315,6 +316,12 @@ export class ExecutionService {
       ai: credentials ? (id, req) => credentials.ai(id, dept, req) : undefined,
       apiKey: credentials ? (id) => credentials.apiKey(id, dept) : undefined,
       chatMemory: chatMemoryFor(this.deps.repos, exec.workflowId),
+      // Only the first answer of a webhook run counts (the caller gets one response).
+      respond: exec.triggerType === 'webhook' ? async (r) => {
+        if (answered) return;
+        answered = true;
+        await this.deps.repos.executions.update(exec.executionId, { webhookResponseJson: JSON.stringify(r).slice(0, 1_000_000) });
+      } : undefined,
       wait: async (ms, signal) => {
         if (ms > waitMaxMs) throw new NodeError(`Wait is longer than the allowed maximum (${Math.round(waitMaxMs / 60000)} min)`, { code: 'WAIT_TOO_LONG' });
         if (ms <= 0) return;

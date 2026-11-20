@@ -104,7 +104,7 @@ export function createMemoryRepositories(): Repositories {
         const all = [...executions.values()].filter((e) => matches(e, f)).sort((a, b) => b.createdAt.localeCompare(a.createdAt) || b.executionId.localeCompare(a.executionId));
         const start = cursor ? all.findIndex((e) => e.executionId === cursor) + 1 : 0;
         const page = all.slice(start, start + limit);
-        const items = page.map(({ triggerItems, triggerNodeId, definitionJson, untilNodeId, ...pub }) => clone(pub));
+        const items = page.map(({ triggerItems, triggerNodeId, definitionJson, untilNodeId, webhookResponseJson, ...pub }) => clone(pub));
         return { items, nextCursor: start + limit < all.length ? page[page.length - 1].executionId : null };
       },
       async count(f) { return [...executions.values()].filter((e) => matches(e, f)).length; },

@@ -44,6 +44,10 @@ export function validateWorkflow(
     }
   }
 
+  if (def.nodes.some((n) => n.type === 'trigger.webhook' && n.config?.responseMode === 'reply') && !def.nodes.some((n) => n.type === 'comm.respondWebhook')) {
+    warn('The Webhook Trigger waits to send back a reply, but there is no “Respond to Webhook” step — callers will only get “ok”.');
+  }
+
   const triggers = def.nodes.filter((n) => registry.get(n.type)?.descriptor.isTrigger);
   if (triggers.length === 0) err('Add a trigger node to start the workflow');
 

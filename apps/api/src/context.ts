@@ -52,6 +52,8 @@ export interface AppContext {
     cronWaitMs: number;
     /** Keep webhook calls open until their run ends (Vercel without Redis), in ms. 0 = off. */
     webhookWaitMs: number;
+    /** "Wait and send back the reply" webhooks: the longest a caller waits, in ms. */
+    webhookReplyMs: number;
   };
   startedAt: number;
   /** Stops queues, schedulers and Redis connections. */

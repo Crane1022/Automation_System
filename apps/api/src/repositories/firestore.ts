@@ -74,7 +74,7 @@ export function createFirestoreRepositories(db: Firestore, opts: { retentionDays
     return { ...rest, triggerItems: triggerItemsJson ? JSON.parse(triggerItemsJson) : null };
   };
   const toPublicExec = (raw: any): Execution => {
-    const { expireAt: _e, triggerItemsJson: _t, triggerNodeId: _n, definitionJson: _d, untilNodeId: _u, ...rest } = raw;
+    const { expireAt: _e, triggerItemsJson: _t, triggerNodeId: _n, definitionJson: _d, untilNodeId: _u, webhookResponseJson: _w, ...rest } = raw;
     return rest;
   };
   const fromStoredExec = (e: Partial<StoredExecution>) => {

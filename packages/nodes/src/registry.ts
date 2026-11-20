@@ -3,7 +3,7 @@ import type { NodeImplementation } from './types.js';
 import { manualTrigger } from './nodes/manual-trigger.js';
 import { webhookTrigger } from './nodes/webhook-trigger.js';
 import { ifCondition } from './nodes/if-condition.js';
-import { httpRequest } from './nodes/http-request.js';
+import { httpRequest, respondWebhook } from './nodes/http-request.js';
 import { combineNode, filterNode, limitNode, loopNode, mergeNode, switchNode, waitNode } from './nodes/logic.js';
 import { eventTrigger, scheduleTrigger } from './nodes/triggers.js';
 import { codeNode } from './nodes/code.js';
@@ -64,7 +64,7 @@ export function createDefaultRegistry(): NodeRegistry {
     // logic
     ifCondition, switchNode, filterNode, mergeNode, loopNode, waitNode, combineNode, limitNode,
     // data
-    httpRequest, codeNode, firebaseRead, firebaseCreate, firebaseUpdate, firebaseDelete,
+    httpRequest, respondWebhook, codeNode, firebaseRead, firebaseCreate, firebaseUpdate, firebaseDelete,
     // communication
     gmailSend, gmailRead,
     sheetsRead, sheetsCreateRow, sheetsUpdateRow,
