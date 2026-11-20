@@ -157,7 +157,20 @@ export function publicWebhookRouter(ctx: AppContext) {
         }
         if (!exec || exec.status === 'failed' || exec.status === 'cancelled') return res.status(500).json({ error: 'The workflow could not answer. See Executions for details.', executionId: result.executionId });
         if (!TERMINAL_STATUSES.includes(exec.status)) return res.status(202).json({ executionId: result.executionId, status: exec.status, error: 'Still working — no answer yet.' });
-        return res.status(200).json({ ok: true, executionId: result.executionId });
+        // Finished without a reply: say which step stopped the flow (it gave no data, so later steps were skipped).
+        const steps = await ctx.repos.executions.listSteps(result.executionId).catch(() => []);
+        // Step output is { <output name>: [items…] } (plus logs): "no data" = every output list is empty.
+        const gaveNothing = (out: unknown) => {
+          if (Array.isArray(out)) return out.length === 0;
+          if (!out || typeof out !== 'object') return false;
+          const lists = Object.entries(out as Record<string, unknown>).filter(([k, v]) => k !== 'logs' && Array.isArray(v)) as [string, unknown[]][];
+          return lists.length > 0 && lists.every(([, v]) => v.length === 0);
+        };
+        const empty = [...steps].reverse().find((st) => st.status === 'success' && gaveNothing(st.outputData));
+        const why = empty
+          ? `The workflow stopped after “${empty.nodeName}”: that step gave no data, so the steps after it (and the reply) did not run.`
+          : 'The workflow finished without a “Respond to Webhook” step, so there is no reply to show.';
+        return res.status(500).json({ error: why, executionId: result.executionId });
       }
 
       // On Vercel without Redis the run happens inside this function, and Vercel pauses the function

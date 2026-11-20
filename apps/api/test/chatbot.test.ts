@@ -436,6 +436,24 @@ describe('Website chat box: webhook that sends back the reply', () => {
     expect((await request(app).post('/hooks/not-a-real-token-123456').send({})).body).toEqual({ error: 'Not found' });
   });
 
+  it('names the step that gave no data when the reply never came', async () => {
+    const id = (await request(app).post('/api/workflows').set(as).send({ name: 'Empty' })).body.workflowId;
+    const definition = { schemaVersion: 1, settings: {}, nodes: [
+      { id: 'hook', type: 'trigger.webhook', name: 'Visitor', position: { x: 0, y: 0 }, config: { method: 'POST', responseMode: 'reply', allowedOrigins: '*' } },
+      { id: 'f', type: 'logic.filter', name: 'System Prompt', position: { x: 100, y: 0 }, config: { conditions: [{ left: '{{ $json.body.message }}', operator: 'equals', right: 'never' }] } },
+      { id: 'r', type: 'comm.respondWebhook', name: 'Reply', position: { x: 200, y: 0 }, config: { bodyType: 'fields', bodyFields: [{ key: 'reply', value: 'x' }] } },
+    ], connections: [
+      { id: 'c1', source: 'hook', sourceHandle: 'main', target: 'f', targetHandle: 'main' },
+      { id: 'c2', source: 'f', sourceHandle: 'main', target: 'r', targetHandle: 'main' },
+    ] };
+    await request(app).put(`/api/workflows/${id}/draft`).set(as).send({ definition });
+    const url: string = (await request(app).post(`/api/workflows/${id}/publish`).set(as)).body.issuedWebhooks[0].url;
+    await request(app).post(`/api/workflows/${id}/activate`).set(as);
+    const r = await request(app).post(`/api/hooks/${url.split('/hooks/')[1]}`).set('origin', SITE).set('content-type', 'text/plain').send('{"message":"hi"}');
+    expect(r.status).toBe(500);
+    expect(r.body.error).toBe('The workflow stopped after “System Prompt”: that step gave no data, so the steps after it (and the reply) did not run.');
+  });
+
   it('“*” allows any website, including page builders that run the code in a sandboxed frame', async () => {
     const anySite = await build({ bodyType: 'fields', bodyFields: [{ key: 'reply', value: 'ok' }] }, '*');
     const r = await request(app).post(`/hooks/${anySite.token}`).set('origin', 'null').set('content-type', 'application/json').send({ message: 'x' });
@@ -468,8 +486,8 @@ describe('Website chat box: webhook that sends back the reply', () => {
     const none = await build(null);
     expect(none.issues.map((i: any) => i.message).join()).toMatch(/no “Respond to Webhook” step/);
     const r2 = await request(app).post(`/hooks/${none.token}`).set('content-type', 'application/json').send({ message: 'x' });
-    expect(r2.status).toBe(200);
-    expect(r2.body).toMatchObject({ ok: true });
+    expect(r2.status).toBe(500);
+    expect(r2.body.error).toMatch(/without a “Respond to Webhook” step/);
   });
 
   it('imports n8n “Respond to Webhook” and webhooks that wait for it', () => {
