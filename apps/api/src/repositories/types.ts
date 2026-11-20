@@ -46,6 +46,8 @@ export interface StoredExecution extends Execution {
   definitionJson?: string | null;
   /** "Test node" runs stop after this node. */
   untilNodeId?: string | null;
+  /** Webhook runs: the answer set by a "Respond to Webhook" step, as JSON ({ status, body }). Never returned by the API. */
+  webhookResponseJson?: string | null;
 }
 
 export interface WebhookEndpoint {
@@ -55,6 +57,8 @@ export interface WebhookEndpoint {
   endpointTokenHash: string;
   /** AES-GCM encrypted HMAC signing secret. */
   signingSecretEncrypted: string;
+  /** AES-GCM encrypted URL token, so editors can see the URL again (endpoints made before 20 Nov 2026 have none). */
+  endpointTokenEncrypted?: string;
   status: 'active' | 'disabled';
   createdAt: string;
 }

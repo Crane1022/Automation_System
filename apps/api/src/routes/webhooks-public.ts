@@ -1,5 +1,6 @@
 import express, { Router } from 'express';
 import { TERMINAL_STATUSES } from '@widebed/shared';
+import { parseOrigins } from '@widebed/nodes';
 import type { AppContext } from '../context.js';
 import { ah } from '../middleware/errors.js';
 import { rateLimit } from '../middleware/rate-limit.js';
@@ -17,20 +18,64 @@ export function publicWebhookRouter(ctx: AppContext) {
   const r = Router();
   const notFound = { error: 'Not found' };
 
+  /** The webhook node behind a token, if its workflow is active. */
+  async function endpointNode(token: string) {
+    const ep = await ctx.webhooks.resolve(token);
+    if (!ep) return null;
+    const wf = await ctx.repos.workflows.get(ep.workflowId);
+    if (!wf || wf.status !== 'active' || !wf.publishedVersionId) return null;
+    const version = await ctx.repos.versions.get(wf.publishedVersionId);
+    const node = version?.nodes.find((n) => n.id === ep.nodeId);
+    return node ? { ep, wf, node } : null;
+  }
+  /** Websites (browser chat boxes) allowed by the webhook step. */
+  const originsOf = (node: { config: Record<string, unknown> }) => parseOrigins(String(node.config.allowedOrigins ?? '')) ?? [];
+  const originAllowed = (node: { config: Record<string, unknown> }, origin: string) => {
+    const list = originsOf(node);
+    return list.includes('*') || list.includes(origin);
+  };
+
+  // Browsers ask first ("preflight") before a chat box on another website may send JSON.
+  // originAllowed() is checked on the real call below.
+  r.options(
+    '/:token',
+    rateLimit({ windowMs: 60_000, max: ctx.config.webhookRateLimitPerMinute, key: (req) => `${req.ip}:${req.params.token?.slice(0, 8)}` }),
+    ah(async (req, res) => {
+      const found = await endpointNode(req.params.token);
+      const origin = req.header('origin');
+      // A website that is not listed may still ask: its real call is then refused with a message
+      // saying which address to add (nothing runs). Unknown tokens stay 404.
+      if (!found || !origin) return res.status(404).json(notFound);
+      res.setHeader('Access-Control-Allow-Origin', origin);
+      res.setHeader('Vary', 'Origin');
+      res.setHeader('Access-Control-Allow-Methods', String(found.node.config.method ?? 'POST'));
+      res.setHeader('Access-Control-Allow-Headers', 'content-type, idempotency-key');
+      res.setHeader('Access-Control-Max-Age', '600');
+      res.status(204).end();
+    }),
+  );
+
   r.all(
     '/:token',
     rateLimit({ windowMs: 60_000, max: ctx.config.webhookRateLimitPerMinute, key: (req) => `${req.ip}:${req.params.token?.slice(0, 8)}` }),
     // Keep the raw bytes: the HMAC must be computed on exactly what was sent.
     express.raw({ type: () => true, limit: ctx.config.webhookMaxBodyBytes }),
     ah(async (req, res) => {
-      const ep = await ctx.webhooks.resolve(req.params.token);
-      if (!ep) return res.status(404).json(notFound);
+      const found = await endpointNode(req.params.token);
+      if (!found) return res.status(404).json(notFound);
+      const { ep, wf, node } = found;
 
-      const wf = await ctx.repos.workflows.get(ep.workflowId);
-      if (!wf || wf.status !== 'active' || !wf.publishedVersionId) return res.status(404).json(notFound);
-      const version = await ctx.repos.versions.get(wf.publishedVersionId);
-      const node = version?.nodes.find((n) => n.id === ep.nodeId);
-      if (!node) return res.status(404).json(notFound);
+      // Calls from a web page carry an Origin header: only the listed websites may use this webhook.
+      const origin = req.header('origin');
+      if (origin) {
+        if (!originAllowed(node, origin)) {
+          // Say which address to add (browsers can only read this if the site is allowed, so also log it).
+          res.setHeader('Access-Control-Allow-Origin', origin);
+          return res.status(403).json({ error: `This website (${origin}) is not allowed yet. In the Webhook step, add it to “Websites that may call it”.` });
+        }
+        res.setHeader('Access-Control-Allow-Origin', origin);
+        res.setHeader('Vary', 'Origin');
+      }
 
       const method = String(node.config.method ?? 'POST');
       if (req.method !== method) return res.status(405).json({ error: `Use ${method}` });
@@ -69,6 +114,32 @@ export function publicWebhookRouter(ctx: AppContext) {
         initiatedBy: null,
         idempotencyKey,
       });
+      // "Wait and send back the reply": wait for the run, then answer with what its Respond step set.
+      if (node.config.responseMode === 'reply') {
+        const until = Date.now() + ctx.config.webhookReplyMs;
+        let exec = await ctx.repos.executions.get(result.executionId);
+        while (exec && !TERMINAL_STATUSES.includes(exec.status) && !exec.webhookResponseJson && Date.now() < until) {
+          await new Promise((r) => setTimeout(r, 300));
+          exec = await ctx.repos.executions.get(result.executionId);
+        }
+        // On Vercel without Redis, keep the function alive until the rest of the run has finished too.
+        if (exec && ctx.config.webhookWaitMs > 0 && ctx.executions.queue.mode === 'in-process') {
+          const stop = Date.now() + ctx.config.webhookWaitMs;
+          while (exec && !TERMINAL_STATUSES.includes(exec.status) && Date.now() < stop) {
+            await new Promise((r) => setTimeout(r, 400));
+            exec = await ctx.repos.executions.get(result.executionId);
+          }
+        }
+        if (exec?.webhookResponseJson) {
+          const answer = JSON.parse(exec.webhookResponseJson) as { status: number; body: unknown; contentType: 'json' | 'text' };
+          res.status(answer.status);
+          return answer.contentType === 'text' ? res.type('text/plain').send(String(answer.body ?? '')) : res.json(answer.body ?? {});
+        }
+        if (!exec || exec.status === 'failed' || exec.status === 'cancelled') return res.status(500).json({ error: 'The workflow could not answer. See Executions for details.', executionId: result.executionId });
+        if (!TERMINAL_STATUSES.includes(exec.status)) return res.status(202).json({ executionId: result.executionId, status: exec.status, error: 'Still working — no answer yet.' });
+        return res.status(200).json({ ok: true, executionId: result.executionId });
+      }
+
       // On Vercel without Redis the run happens inside this function, and Vercel pauses the function
       // once it has answered. Keep the call open until the run ends (or the wait limit is reached).
       const waitMs = ctx.config.webhookWaitMs;

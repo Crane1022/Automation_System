@@ -265,6 +265,38 @@ export const BUILT_IN_TEMPLATES: WorkflowTemplate[] = [
     ),
   }),
   builtIn({
+    templateId: 'tpl_ai_website_chat',
+    name: 'AI: chat box on your website',
+    description: 'A chat bubble on your website. Visitors type a question, the AI answers right away in the chat box, remembers the conversation and can look things up in your Google Sheets.',
+    category: 'AI',
+    needs: [
+      AI_NEED,
+      'Optional: a Google account and Google Sheets with your FAQ or unit details, if the bot should look things up.',
+      'Access to your website’s HTML (or a “custom code” box in your website builder).',
+    ],
+    setup: [
+      'On “Website visitor message”, list your website address under “Websites that may call it” (e.g. https://www.widebed.com).',
+      'On “AI Chatbot”, choose the AI connection and write the instructions. To let it search sheets, choose the Google account and add the sheet links (or delete the example list).',
+      'Publish and switch to Active, and copy the webhook URL shown once.',
+      'Click the “Website visitor message” step, copy the chat box code, paste your webhook URL into it, and put it on your website before </body>.',
+      'Open your website and send a test message. Each message appears under Executions.',
+    ],
+    definition: chain(
+      n('s1', 'trigger.webhook', 'Website visitor message', { method: 'POST', requireSignature: false, responseMode: 'reply', allowedOrigins: '', testData: JSON.stringify({ message: 'Hi, is parking free?', sessionId: 'test-visitor-1', page: 'https://www.widebed.com/' }, null, 2) }),
+      n('s2', 'ai.chatbot', 'AI Chatbot', {
+        message: '{{ $json.body.message }}',
+        instructions: 'You are the friendly website assistant of Widebed, a short-term rental company in Malaysia. Answer in the visitor’s language, in 1–3 short sentences. Help with questions about our properties, booking and check-in. Never invent prices or availability: if you do not know, ask for their email or phone number so the team can reply.\n\nToday: {{ $today }}\nPage the visitor is on: {{ $json.body.page }}',
+        conversationId: '{{ $json.body.sessionId }}',
+        memoryMessages: 20,
+        googleConnection: '',
+        lookups: [{ name: 'FAQ', spreadsheet: '', sheet: 'FAQ', description: 'Common questions and answers: check-in time, parking, Wi-Fi, house rules, cancellations.' }],
+        maxLookups: 3,
+        saveAs: 'output',
+      }, true),
+      n('s3', 'comm.respondWebhook', 'Send the reply to the chat box', { bodyType: 'fields', bodyFields: [{ key: 'reply', value: '{{ $json.output }}' }], text: '', statusCode: 200 }),
+    ),
+  }),
+  builtIn({
     templateId: 'tpl_ai_live_chat',
     name: 'AI: live chat guest assistant (GoHighLevel)',
     description: 'Answers every new GoHighLevel live-chat or WhatsApp message with AI, remembers each guest’s conversation and looks up bookings and units in Google Sheets — like the “Willow” n8n bot.',
@@ -282,7 +314,7 @@ export const BUILT_IN_TEMPLATES: WorkflowTemplate[] = [
       'Send a test message from GoHighLevel and open Executions to see each step.',
     ],
     definition: chain(
-      n('s1', 'trigger.webhook', 'New chat message', { method: 'POST', requireSignature: false }),
+      n('s1', 'trigger.webhook', 'New chat message', { method: 'POST', requireSignature: false, testData: JSON.stringify({ contact_id: 'test-contact-1', full_name: 'Test Guest', phone: '+60123456789', message: { body: 'Hi, my booking number is WB-1029. What time is check-in?' } }, null, 2) }),
       n('s2', 'ai.chatbot', 'AI Chatbot', {
         message: '{{ $json.body.message.body }}',
         instructions: 'You are Willow, the friendly guest assistant of Widebed, a short-term rental company in Malaysia. Answer in the guest’s language, briefly and politely. Before sharing any booking or unit details, check the guest in “Booking Details” using their phone number or booking number. Never share door codes or Wi-Fi passwords unless the booking is confirmed and check-in is today. If you cannot help, say a team member will reply soon.\n\nGuest name: {{ $json.body.full_name }}\nGuest phone: {{ $json.body.phone }}\nToday: {{ $today }}',

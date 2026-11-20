@@ -11,6 +11,7 @@ import NodeIcon from '@/components/ui/NodeIcon.vue';
 import JsonView from '@/components/ui/JsonView.vue';
 import StatusBadge from '@/components/ui/StatusBadge.vue';
 import { formatDuration } from '@/lib/format';
+import { toast } from '@/lib/toast';
 import type { WbNodeData } from './types';
 
 const props = defineProps<{
@@ -20,6 +21,8 @@ const props = defineProps<{
   readonly?: boolean;
   published: boolean;
   busy?: boolean;
+  /** Webhook Trigger: its URL (editors), when published. */
+  webhook?: { url: string | null; signingSecret: string | null } | null;
 }>();
 const emit = defineEmits<{
   update: [Partial<WbNodeData>];
@@ -52,6 +55,17 @@ function setField(key: string, v: unknown) {
   emit('update', { config: { ...props.data.config, [key]: v } });
 }
 const retryEnabled = computed(() => !!props.data.retry);
+
+/** Website chat box code for webhooks that send back a reply. */
+const widgetSnippet = computed(
+  () => `<script src="${window.location.origin}/chat-widget.js"\n  data-webhook="${props.webhook?.url ?? 'PASTE-THE-WEBHOOK-URL-HERE'}"\n  data-title="Widebed" data-welcome="Hi! How can we help with your stay?"\n  data-color="#1f3a5f" defer><\/script>`,
+);
+function copyText(text: string | null) {
+  if (text) navigator.clipboard.writeText(text).then(() => toast('Copied', 'success', 1500), () => toast('Could not copy — select the text instead', 'error'));
+}
+function copySnippet() {
+  navigator.clipboard.writeText(widgetSnippet.value).then(() => toast('Copied', 'success', 1500), () => toast('Could not copy — select the text instead', 'error'));
+}
 
 /** Schedule Trigger: "Every Monday at 9:00 AM" + a warning when a one-time date has passed. */
 const schedule = computed(() => {
@@ -148,9 +162,32 @@ const docsHtml = computed(() => {
           Only IT Admins can change code. You can still move this node or edit the rest of the workflow.
         </div>
 
-        <div v-if="data.nodeType === 'trigger.webhook'" class="rounded-md bg-info-soft text-info text-[12px] p-2.5 leading-relaxed">
-          The webhook URL is created when the workflow is <b>published</b> and is shown only once.
-          <button v-if="published && !readonly" class="mt-1.5 inline-flex items-center gap-1 underline" @click="emit('rotateWebhook')"><RefreshCw class="size-3" />Generate a new URL</button>
+        <div v-if="data.nodeType === 'trigger.webhook'" class="rounded-md bg-info-soft text-info text-[12px] p-2.5 leading-relaxed space-y-1.5">
+          <template v-if="webhook?.url">
+            <div class="font-medium">Webhook URL</div>
+            <div class="flex gap-1.5">
+              <input class="input font-mono text-[11.5px] bg-surface text-ink" readonly :value="webhook.url" @focus="($event.target as HTMLInputElement).select()" />
+              <button class="btn-secondary btn-icon shrink-0" aria-label="Copy webhook URL" @click="copyText(webhook.url)"><Copy class="size-4" /></button>
+            </div>
+            <div>Only works while the workflow is <b>Active</b>. Anyone with this URL can call it — share it only with the system that needs it.</div>
+            <details v-if="webhook.signingSecret" class="text-[11.5px]">
+              <summary class="cursor-pointer">Signing secret (only for “Require HMAC signature”)</summary>
+              <div class="flex gap-1.5 mt-1"><input class="input font-mono text-[11.5px] bg-surface text-ink" readonly :value="webhook.signingSecret" /><button class="btn-secondary btn-icon shrink-0" aria-label="Copy signing secret" @click="copyText(webhook.signingSecret)"><Copy class="size-4" /></button></div>
+            </details>
+          </template>
+          <template v-else-if="published && webhook && !webhook.url">
+            This URL was made before URLs could be shown again. Click <b>Generate a new URL</b> once — after that it is always shown here. (The old URL stops working, so update the caller.)
+          </template>
+          <template v-else-if="published">Publish again to create the URL for this step.</template>
+          <template v-else>The webhook URL is created when the workflow is <b>published</b>, and then shown here.</template>
+          <button v-if="published && !readonly" class="inline-flex items-center gap-1 underline" @click="emit('rotateWebhook')"><RefreshCw class="size-3" />Generate a new URL</button>
+        </div>
+        <div v-if="data.nodeType === 'trigger.webhook' && data.config.responseMode === 'reply'" class="rounded-md border border-line bg-surface-2 p-2.5 text-[12px] leading-relaxed">
+          <div class="font-medium mb-1">Chat box for your website</div>
+          Paste this before <code class="font-mono">&lt;/body&gt;</code> on your website (or use the all-in-one HTML block from docs/chat-box.html in a page builder).
+          Also list the website below under “Websites that may call it”.
+          <pre class="font-mono text-[11px] bg-surface border border-line rounded p-2 mt-1.5 whitespace-pre-wrap break-all">{{ widgetSnippet }}</pre>
+          <button class="btn-ghost h-7 text-[12px] mt-1" @click="copySnippet"><Copy class="size-3.5" />Copy code</button>
         </div>
 
         <FieldInput v-for="f in visibleFields" :key="f.key" :field="f" :model-value="data.config[f.key]" :readonly="readonly || codeLocked" @update:model-value="setField(f.key, $event)" />

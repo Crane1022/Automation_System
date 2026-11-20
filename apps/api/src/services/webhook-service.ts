@@ -4,7 +4,7 @@ import { SecretBox, hashToken, randomToken } from '../lib/crypto.js';
 import { newId, nowIso } from '../lib/ids.js';
 import type { Repositories, WebhookEndpoint } from '../repositories/types.js';
 
-/** Returned only once, right after creation or rotation. */
+/** Returned after creation or rotation, and to editors of the workflow at any time. */
 export interface IssuedWebhook {
   webhookId: string;
   nodeId: string;
@@ -14,9 +14,9 @@ export interface IssuedWebhook {
 
 /**
  * Webhook endpoints.
- * The URL is /hooks/<token>. Only sha256(token) is stored, so a database
- * leak does not reveal callable URLs. The HMAC signing secret is stored
- * encrypted because the server needs it back to verify signatures.
+ * The URL is /hooks/<token>. Calls are matched by sha256(token). The token itself and the HMAC
+ * signing secret are stored AES-encrypted (ENCRYPTION_KEY), so people who may edit the workflow
+ * can see and copy the URL again; the database alone does not reveal callable URLs.
  */
 export class WebhookService {
   constructor(
@@ -60,6 +60,12 @@ export class WebhookService {
     return ep && ep.status === 'active' ? ep : null;
   }
 
+  /** URL + signing secret for editors. null when the endpoint was made before URLs were kept (generate a new one). */
+  reveal(ep: WebhookEndpoint): IssuedWebhook | null {
+    if (!ep.endpointTokenEncrypted) return null;
+    return { webhookId: ep.webhookId, nodeId: ep.nodeId, url: this.urlFor(this.box.decrypt(ep.endpointTokenEncrypted)), signingSecret: this.box.decrypt(ep.signingSecretEncrypted) };
+  }
+
   signingSecret(ep: WebhookEndpoint): string {
     return this.box.decrypt(ep.signingSecretEncrypted);
   }
@@ -73,6 +79,7 @@ export class WebhookService {
       nodeId,
       endpointTokenHash: hashToken(token),
       signingSecretEncrypted: this.box.encrypt(signingSecret),
+      endpointTokenEncrypted: this.box.encrypt(token),
       status: 'active',
       createdAt: nowIso(),
     };

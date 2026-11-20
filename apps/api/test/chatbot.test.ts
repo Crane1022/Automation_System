@@ -366,3 +366,112 @@ describe('Webhook calls on Vercel without Redis', () => {
     expect((await repos.executions.get(hook.body.executionId))!.status).toBe('success');
   });
 });
+
+/* ---------------------------------------------- website chat box (reply) */
+
+describe('Website chat box: webhook that sends back the reply', () => {
+  const verifier: TokenVerifier = { verify: async (t) => ({ uid: t.replace('tok-', ''), email: `${t}@x.com`, name: t, emailVerified: true }) };
+  const repos = createMemoryRepositories();
+  const ctx = buildContext(loadConfig({ NODE_ENV: 'test', FIREBASE_PROJECT_ID: 't', ENCRYPTION_KEY: crypto.randomBytes(32).toString('base64'), RATE_LIMIT_PER_MINUTE: '10000', PUBLIC_BASE_URL: 'https://automation.test' } as any), repos, verifier);
+  startProcessing(ctx);
+  const app = createApp(ctx);
+  const as = { Authorization: 'Bearer tok-boss' };
+  const SITE = 'https://www.widebed.com';
+  let token = '';
+
+  const build = async (respond: Record<string, unknown> | null, origins = `${SITE}, https://widebed.com/`) => {
+    const id = (await request(app).post('/api/workflows').set(as).send({ name: `Chat ${Math.random()}` })).body.workflowId;
+    const nodes: any[] = [{ id: 'hook', type: 'trigger.webhook', name: 'Visitor', position: { x: 0, y: 0 }, config: { method: 'POST', responseMode: 'reply', allowedOrigins: origins } }];
+    const connections: any[] = [];
+    if (respond) {
+      nodes.push({ id: 'r', type: 'comm.respondWebhook', name: 'Reply', position: { x: 200, y: 0 }, config: respond });
+      connections.push({ id: 'c', source: 'hook', sourceHandle: 'main', target: 'r', targetHandle: 'main' });
+    }
+    const definition = { schemaVersion: 1, nodes, connections, settings: {} };
+    const save = await request(app).put(`/api/workflows/${id}/draft`).set(as).send({ definition });
+    const url: string = (await request(app).post(`/api/workflows/${id}/publish`).set(as)).body.issuedWebhooks[0].url;
+    await request(app).post(`/api/workflows/${id}/activate`).set(as);
+    return { token: url.split('/hooks/')[1]!, issues: save.body.issues ?? [] };
+  };
+
+  beforeAll(async () => {
+    await repos.users.create({ uid: 'boss', name: 'boss', email: 'boss@x.com', role: 'super_admin', department: null, status: 'active', createdAt: new Date().toISOString(), lastLoginAt: null });
+    token = (await build({ bodyType: 'fields', bodyFields: [{ key: 'reply', value: 'You said: {{ $json.body.message }}' }], statusCode: 200 })).token;
+  });
+
+  it('lets the listed website ask first (browser preflight) and refuses other websites', async () => {
+    const ok = await request(app).options(`/hooks/${token}`).set('origin', SITE).set('access-control-request-method', 'POST');
+    expect(ok.status).toBe(204);
+    expect(ok.headers['access-control-allow-origin']).toBe(SITE);
+    expect(ok.headers['access-control-allow-headers']).toContain('content-type');
+    expect((await request(app).options('/hooks/not-a-real-token-123456').set('origin', SITE)).status).toBe(404);
+    // Another website may ask, but its real call is refused with the address to add, and nothing runs.
+    const runsBefore = (await repos.executions.list({}, 100)).items.length;
+    const blocked = await request(app).post(`/hooks/${token}`).set('origin', 'https://evil.example').set('content-type', 'application/json').send({ message: 'hi' });
+    expect(blocked.status).toBe(403);
+    expect(blocked.body.error).toContain('https://evil.example');
+    expect((await repos.executions.list({}, 100)).items.length).toBe(runsBefore);
+  });
+
+  it('answers with the Respond to Webhook step, quotes and new lines intact', async () => {
+    const res = await request(app).post(`/hooks/${token}`).set('origin', 'https://widebed.com').set('content-type', 'application/json').send({ message: 'Is "parking" free?\nThanks', sessionId: 'web-1' });
+    expect(res.status).toBe(200);
+    expect(res.headers['access-control-allow-origin']).toBe('https://widebed.com');
+    expect(res.body).toEqual({ reply: 'You said: Is "parking" free?\nThanks' });
+    // Server-to-server calls (no Origin) still work.
+    expect((await request(app).post(`/hooks/${token}`).set('content-type', 'application/json').send({ message: 'x' })).body).toEqual({ reply: 'You said: x' });
+    // The stored answer never shows in the Executions API.
+    const list = await request(app).get('/api/executions').set(as);
+    expect(JSON.stringify(list.body)).not.toContain('webhookResponseJson');
+  });
+
+  it('“*” allows any website, including page builders that run the code in a sandboxed frame', async () => {
+    const anySite = await build({ bodyType: 'fields', bodyFields: [{ key: 'reply', value: 'ok' }] }, '*');
+    const r = await request(app).post(`/hooks/${anySite.token}`).set('origin', 'null').set('content-type', 'application/json').send({ message: 'x' });
+    expect([r.status, r.body, r.headers['access-control-allow-origin']]).toEqual([200, { reply: 'ok' }, 'null']);
+  });
+
+  it('“Test run” in the editor uses the Webhook step’s sample request', async () => {
+    const id = (await request(app).post('/api/workflows').set(as).send({ name: 'Sample' })).body.workflowId;
+    const definition = { schemaVersion: 1, settings: {}, connections: [{ id: 'c', source: 'hook', sourceHandle: 'main', target: 'r', targetHandle: 'main' }], nodes: [
+      { id: 'hook', type: 'trigger.webhook', name: 'Visitor', position: { x: 0, y: 0 }, config: { method: 'POST', responseMode: 'reply', testData: '{ "message": "Is parking free?" }' } },
+      { id: 'r', type: 'comm.respondWebhook', name: 'Reply', position: { x: 200, y: 0 }, config: { bodyType: 'fields', bodyFields: [{ key: 'reply', value: 'You asked: {{ $json.body.message }}' }] } },
+    ] };
+    await request(app).put(`/api/workflows/${id}/draft`).set(as).send({ definition });
+    const run = await request(app).post(`/api/workflows/${id}/run`).set(as).send({ mode: 'draft' });
+    expect(run.status).toBe(202);
+    let exec;
+    for (let i = 0; i < 50 && exec?.status !== 'success'; i++) {
+      await new Promise((r) => setTimeout(r, 50));
+      exec = await repos.executions.get(run.body.executionId);
+    }
+    expect(exec!.status).toBe('success');
+    expect(exec!.triggerItems).toEqual([{ json: { body: { message: 'Is parking free?' }, query: {}, headers: { 'content-type': 'application/json' }, method: 'POST', test: true } }]);
+  });
+
+  it('plain-text answers, and a clear result when nothing answered', async () => {
+    const text = await build({ bodyType: 'text', text: 'Hello {{ $json.body.message }}', statusCode: 201 });
+    const r = await request(app).post(`/hooks/${text.token}`).set('content-type', 'application/json').send({ message: 'Ana' });
+    expect([r.status, r.text, r.headers['content-type']]).toEqual([201, 'Hello Ana', expect.stringContaining('text/plain')]);
+
+    const none = await build(null);
+    expect(none.issues.map((i: any) => i.message).join()).toMatch(/no “Respond to Webhook” step/);
+    const r2 = await request(app).post(`/hooks/${none.token}`).set('content-type', 'application/json').send({ message: 'x' });
+    expect(r2.status).toBe(200);
+    expect(r2.body).toMatchObject({ ok: true });
+  });
+
+  it('imports n8n “Respond to Webhook” and webhooks that wait for it', () => {
+    const r = convertN8n({
+      name: 'site bot',
+      nodes: [
+        { id: 'w', name: 'Hook', type: 'n8n-nodes-base.webhook', parameters: { httpMethod: 'POST', responseMode: 'responseNode' } },
+        { id: 'r', name: 'Answer', type: 'n8n-nodes-base.respondToWebhook', parameters: { respondWith: 'json', responseBody: '={ "reply": "{{ $json.output }}", "ok": true }' } },
+      ],
+      connections: { Hook: { main: [[{ node: 'Answer', type: 'main', index: 0 }]] } },
+    });
+    expect(r.report.unsupported).toEqual([]);
+    expect(r.definition.nodes[0]!.config).toMatchObject({ responseMode: 'reply' });
+    expect(r.definition.nodes[1]).toMatchObject({ type: 'comm.respondWebhook', config: { bodyType: 'fields', bodyFields: [{ key: 'reply', value: '{{ $json.output }}' }, { key: 'ok', value: true }] } });
+  });
+});

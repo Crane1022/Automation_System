@@ -310,9 +310,11 @@ describe('webhooks', () => {
     // Re-publishing keeps the same endpoint (no new token issued).
     const pub2 = await request(app).post(`/api/workflows/${id}/publish`).set(as('boss'));
     expect(pub2.body.issuedWebhooks).toHaveLength(0);
-    // Listing never reveals tokens.
+    // Editors can see and copy the URL again (stored encrypted, never as plain text).
     const list = await request(app).get(`/api/workflows/${id}/webhooks`).set(as('boss'));
-    expect(JSON.stringify(list.body)).not.toContain(token);
+    expect(list.body.items[0]).toMatchObject({ url, signingSecret: secret });
+    const stored = await repos.webhooks.listByWorkflow(id);
+    expect(JSON.stringify(stored)).not.toContain(token);
   });
 
   it('rejects calls while inactive, unsigned or with a bad signature', async () => {

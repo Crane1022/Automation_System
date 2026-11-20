@@ -31,6 +31,29 @@ export function payloadToItems(payload: unknown): Item[] | undefined {
   return list.map((v) => ({ json: v && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, unknown>) : { value: v } }));
 }
 
+/**
+ * Test runs from the editor send no data. A Webhook Trigger then uses its "Sample request for
+ * Test run" so the steps after it have something to work with.
+ */
+export function testItems(def: { nodes: { id: string; type: string; config: Record<string, unknown> }[] }, triggerNodeId: string | undefined, payload: unknown): Item[] | undefined {
+  const given = payloadToItems(payload);
+  if (given) return given;
+  const trigger = def.nodes.find((n) => (triggerNodeId ? n.id === triggerNodeId : n.type.startsWith('trigger.')));
+  if (trigger?.type !== 'trigger.webhook') return undefined;
+  const raw = trigger.config.testData;
+  let body: unknown = raw;
+  if (typeof raw === 'string') {
+    if (!raw.trim()) return undefined;
+    try {
+      body = JSON.parse(raw);
+    } catch {
+      body = raw;
+    }
+  }
+  if (body === undefined || body === null) return undefined;
+  return [{ json: { body, query: {}, headers: { 'content-type': 'application/json' }, method: String(trigger.config.method ?? 'POST'), test: true } }];
+}
+
 export function workflowsRouter(ctx: AppContext) {
   const r = Router();
   const { repos } = ctx;
@@ -373,7 +396,7 @@ export function workflowsRouter(ctx: AppContext) {
       mode: body.mode,
       triggerType: 'manual',
       triggerNodeId: body.triggerNodeId,
-      triggerItems: payloadToItems(body.payload),
+      triggerItems: body.mode === 'draft' ? testItems(wf.draftDefinition, body.triggerNodeId, body.payload) : payloadToItems(body.payload),
       initiatedBy: req.user!.uid,
     });
     res.status(202).json(result);
@@ -389,7 +412,7 @@ export function workflowsRouter(ctx: AppContext) {
       mode: 'draft',
       triggerType: 'manual',
       triggerNodeId: body.triggerNodeId,
-      triggerItems: payloadToItems(body.payload),
+      triggerItems: testItems(wf.draftDefinition, body.triggerNodeId, body.payload),
       initiatedBy: req.user!.uid,
       untilNodeId: req.params.nodeId,
     });
@@ -399,8 +422,13 @@ export function workflowsRouter(ctx: AppContext) {
   r.get('/:id/webhooks', ah(async (req, res) => {
     const wf = await load(req, 'edit');
     const list = await repos.webhooks.listByWorkflow(wf.workflowId);
-    // Never return token hashes or secrets.
-    res.json({ items: list.map((w) => ({ webhookId: w.webhookId, nodeId: w.nodeId, status: w.status, createdAt: w.createdAt })) });
+    // Editors see the URL and signing secret (decrypted here). Never token hashes.
+    res.json({
+      items: list.map((w) => {
+        const shown = ctx.webhooks.reveal(w);
+        return { webhookId: w.webhookId, nodeId: w.nodeId, status: w.status, createdAt: w.createdAt, url: shown?.url ?? null, signingSecret: shown?.signingSecret ?? null };
+      }),
+    });
   }));
 
   r.post('/:id/webhooks/:nodeId/rotate', ah(async (req, res) => {

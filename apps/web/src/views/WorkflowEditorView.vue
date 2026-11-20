@@ -61,6 +61,17 @@ let stopStream: (() => void) | null = null;
 const showVersions = ref(false);
 const versions = ref<(Omit<WorkflowVersion, 'nodes' | 'connections'> & { nodeCount: number })[]>([]);
 const issued = ref<IssuedWebhook[] | null>(null);
+/** Webhook URLs per trigger node id, shown in the Webhook step (editors only). url null = made before URLs were kept. */
+const webhookUrls = ref<Record<string, { url: string | null; signingSecret: string | null }>>({});
+async function loadWebhooks() {
+  if (!wf.value?.publishedVersionId || !wf.value.permissions.edit) return;
+  try {
+    const res = await api<{ items: { nodeId: string; url: string | null; signingSecret: string | null }[] }>(`/workflows/${wf.value.workflowId}/webhooks`);
+    webhookUrls.value = Object.fromEntries(res.items.map((w) => [w.nodeId, { url: w.url, signingSecret: w.signingSecret }]));
+  } catch {
+    /* the panel just shows no URL */
+  }
+}
 
 /* Workflow settings: timeout and default retry policy (saved with the draft). */
 const showSettings = ref(false);
@@ -420,6 +431,7 @@ async function load() {
     savedAt.value = wf.value.updatedAt;
     if (wf.value.draftDefinition.nodes.length) setTimeout(() => fitView({ padding: 0.3, maxZoom: 1 }), 50);
     validate();
+    loadWebhooks();
   } catch (err) {
     loadError.value = (err as Error).message;
   }
@@ -454,6 +466,7 @@ async function publish() {
     wf.value.publishedAt = res.version.publishedAt;
     toast(`Published version ${res.version.versionNumber}`, 'success');
     if (res.issuedWebhooks.length) issued.value = res.issuedWebhooks;
+    loadWebhooks();
   } catch (err: any) {
     if (err?.details) applyIssues(err.details);
     showIssues.value = true;
@@ -549,6 +562,7 @@ async function rotateWebhook() {
   if (!selectedId.value || !confirm('Generate a new URL? The current URL will stop working immediately.')) return;
   try {
     issued.value = [await api<IssuedWebhook>(`/workflows/${workflowId.value}/webhooks/${selectedId.value}/rotate`, { method: 'POST' })];
+    loadWebhooks();
   } catch (err) {
     toastError(err);
   }
@@ -862,6 +876,7 @@ const copy = (text: string) => navigator.clipboard.writeText(text).then(() => to
         :step="selectedStep"
         :readonly="!canEdit"
         :published="!!wf?.publishedVersion"
+        :webhook="webhookUrls[selectedNode.id] ?? null"
         :busy="running"
         @update="updateSelected"
         @close="selectedId = null"
@@ -924,10 +939,10 @@ const copy = (text: string) => navigator.clipboard.writeText(text).then(() => to
       </template>
     </Modal>
 
-    <!-- Webhook URL shown once -->
+    <!-- Webhook URL (also shown in the Webhook step) -->
     <Modal v-if="issued" title="Webhook endpoint ready" width="600px" @close="issued = null">
       <div class="rounded-md bg-warn-soft text-warn text-[12px] p-2.5 mb-4 flex gap-2">
-        <AlertTriangle class="size-4 shrink-0" />Copy these now. For security they are not stored in readable form and will not be shown again.
+        <AlertTriangle class="size-4 shrink-0" />You can see and copy these again any time: click the Webhook step in this workflow.
       </div>
       <div v-for="h in issued" :key="h.webhookId" class="space-y-3">
         <div>
