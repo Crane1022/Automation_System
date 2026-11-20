@@ -22,9 +22,12 @@ export function errorHandler(err: unknown, req: Request, res: Response, _next: N
   if ((err as any)?.type === 'entity.parse.failed') {
     return res.status(400).json({ error: 'Malformed JSON body' });
   }
-  // Firestore index missing or still being built (FAILED_PRECONDITION, code 9).
+  // Firestore index missing or still being built (FAILED_PRECONDITION, code 9; count queries
+  // report it as INVALID_ARGUMENT, code 3, "The query requires an index").
   const e = err as { code?: unknown; message?: unknown };
-  if ((e?.code === 9 || e?.code === 'failed-precondition') && /index/i.test(String(e?.message ?? ''))) {
+  const msg = String(e?.message ?? '');
+  const missingIndex = ((e?.code === 9 || e?.code === 'failed-precondition') && /index/i.test(msg)) || (e?.code === 3 && /requires an index/i.test(msg));
+  if (missingIndex) {
     const link = /https:\/\/console\.firebase\.google\.com\S+/.exec(String(e.message))?.[0];
     console.error(
       `[api] ${req.method} ${req.path}: Firestore index missing or still building.` +
