@@ -14,7 +14,7 @@ export interface IssuedWebhook {
 
 /**
  * Webhook endpoints.
- * The URL is /hooks/<token>. Calls are matched by sha256(token). The token itself and the HMAC
+ * The URL is /api/hooks/<token> (older /hooks/<token> URLs still work). Calls are matched by sha256(token). The token itself and the HMAC
  * signing secret are stored AES-encrypted (ENCRYPTION_KEY), so people who may edit the workflow
  * can see and copy the URL again; the database alone does not reveal callable URLs.
  */
@@ -27,7 +27,8 @@ export class WebhookService {
   ) {}
 
   urlFor(token: string) {
-    return `${this.publicBaseUrl.replace(/\/$/, '')}/hooks/${token}`;
+    // /api/hooks/… is forwarded to the API on every hosting setup; /hooks/… keeps working too.
+    return `${this.publicBaseUrl.replace(/\/$/, '')}/api/hooks/${token}`;
   }
 
   /** Makes sure every webhook trigger in the version has an endpoint; removes stale ones. */

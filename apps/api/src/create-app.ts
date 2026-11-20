@@ -35,6 +35,9 @@ export function createApp(ctx: AppContext) {
   // Public, unauthenticated routes.
   app.get('/healthz', (_req, res) => res.json({ status: 'ok' }));
   app.use('/hooks', publicWebhookRouter(ctx));
+  // Same webhooks under /api/hooks: hosting that only forwards /api/* to the API (e.g. some Vercel
+  // setups answer /hooks/* themselves with 405) still reaches them. Mounted before the /api auth.
+  app.use('/api/hooks', publicWebhookRouter(ctx));
   app.use('/events', publicEventsRouter(ctx));
   app.use('/oauth', oauthRouter(ctx));
   app.use('/cron', cronRouter(ctx));

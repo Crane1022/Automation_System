@@ -176,13 +176,20 @@
 
     var ctrl = window.AbortController ? new AbortController() : null;
     var timer = setTimeout(function () { if (ctrl) ctrl.abort(); }, 60000);
-    fetch(cfg.webhook, {
-      method: 'POST',
-      // text/plain is a "simple" request: no CORS preflight, so it works on any website builder.
-      headers: { 'content-type': 'text/plain;charset=UTF-8' },
-      body: JSON.stringify({ message: text, sessionId: sessionId, page: location.href, title: document.title }),
-      signal: ctrl ? ctrl.signal : undefined,
-    })
+    var payload = JSON.stringify({ message: text, sessionId: sessionId, page: location.href, title: document.title });
+    function post(url) {
+      return fetch(url, {
+        method: 'POST',
+        // text/plain is a "simple" request: no CORS preflight, so it works on any website builder.
+        headers: { 'content-type': 'text/plain;charset=UTF-8' },
+        body: payload,
+        signal: ctrl ? ctrl.signal : undefined,
+      });
+    }
+    // Older URLs use /hooks/...; if the hosting does not pass that to the app, try /api/hooks/... once.
+    var alt = cfg.webhook.indexOf('/api/hooks/') < 0 ? cfg.webhook.replace('/hooks/', '/api/hooks/') : null;
+    post(cfg.webhook)
+      .then(function (res) { return alt && res.status === 405 ? post(alt) : res; }, function (err) { if (alt) return post(alt); throw err; })
       .then(function (res) {
         var type = res.headers.get('content-type') || '';
         return (type.indexOf('json') >= 0 ? res.json() : res.text()).then(function (data) { return { ok: res.ok, status: res.status, data: data }; });

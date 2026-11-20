@@ -306,7 +306,7 @@ describe('webhooks', () => {
     expect(pub.body.issuedWebhooks).toHaveLength(1);
     ({ url, signingSecret: secret } = pub.body.issuedWebhooks[0]);
     token = url.split('/hooks/')[1];
-    expect(url.startsWith('https://automation.test/hooks/')).toBe(true);
+    expect(url.startsWith('https://automation.test/api/hooks/')).toBe(true);
     // Re-publishing keeps the same endpoint (no new token issued).
     const pub2 = await request(app).post(`/api/workflows/${id}/publish`).set(as('boss'));
     expect(pub2.body.issuedWebhooks).toHaveLength(0);
