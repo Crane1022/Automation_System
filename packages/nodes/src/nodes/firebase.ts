@@ -152,7 +152,7 @@ export const firebaseRead = defineNode({
         while (next < items.length) {
           const i = next++;
           const c = i === 0 ? first : ctx.resolve(ctx.config, items[i], i);
-          const saveAs = c.saveAs || first.saveAs;
+          const saveAs = String(c.saveAs || first.saveAs);
           const id = c.docId == null ? '' : String(c.docId).trim();
           const full = join(String(c.collection).trim(), id);
           const blank = !id || /\/\//.test(full) || full.endsWith('/') || /(^|\/)(undefined|null)(\/|$)/.test(full);
