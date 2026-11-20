@@ -22,6 +22,7 @@
     { "source": "/hooks/(.*)", "destination": { "service": "api" } },
     { "source": "/events/(.*)", "destination": { "service": "api" } },
     { "source": "/oauth/(.*)", "destination": { "service": "api" } },
+    { "source": "/cron/(.*)", "destination": { "service": "api" } },
     { "source": "/healthz", "destination": { "service": "api" } },
     { "source": "/(.*)", "destination": { "service": "web" } }
   ]

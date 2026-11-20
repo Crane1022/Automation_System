@@ -68,6 +68,19 @@ const schema = z.object({
   GOOGLE_OAUTH_CLIENT_ID: z.string().optional(),
   GOOGLE_OAUTH_CLIENT_SECRET: z.string().optional(),
 
+  /**
+   * Secret for GET /cron/run-schedules (an outside timer such as cron-job.org calls it so
+   * schedules run on hosting that sleeps, e.g. Vercel). Empty = the link is turned off.
+   */
+  CRON_SECRET: z
+    .string()
+    .optional()
+    .refine((v) => !v || v.length >= 24, 'CRON_SECRET must be at least 24 characters'),
+  /** How late a missed schedule may still be started by /cron/run-schedules. */
+  CRON_CATCHUP_MINUTES: z.coerce.number().int().min(1).max(1440).default(180),
+  /** How long /cron/run-schedules waits for the runs to finish (without Redis). */
+  CRON_WAIT_SECONDS: z.coerce.number().int().min(0).max(800).default(240),
+
   WEBHOOK_MAX_BODY_BYTES: z.coerce.number().int().default(1024 * 1024),
   RATE_LIMIT_PER_MINUTE: z.coerce.number().int().default(300),
   WEBHOOK_RATE_LIMIT_PER_MINUTE: z.coerce.number().int().default(120),

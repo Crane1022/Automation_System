@@ -134,6 +134,9 @@ export function buildContext(config: Config, repos: Repositories, verifier: Toke
       trustProxy: config.TRUST_PROXY,
       nodeEnv: config.NODE_ENV,
       publicBaseUrl: config.PUBLIC_BASE_URL,
+      cronSecret: config.CRON_SECRET || null,
+      cronCatchUpMs: config.CRON_CATCHUP_MINUTES * 60_000,
+      cronWaitMs: config.CRON_WAIT_SECONDS * 1000,
     },
     startedAt: Date.now(),
     async shutdown() {

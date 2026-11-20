@@ -145,14 +145,17 @@ export class ExecutionService {
     return { executionId, deduplicated: false };
   }
 
-  /** Called by the scheduler for each occurrence of a Schedule Trigger. */
-  async fireSchedule(workflowId: string, nodeId: string, scheduledFor: string, occurrenceKey: string) {
+  /**
+   * Called by the scheduler (and /cron/run-schedules) for each occurrence of a Schedule Trigger.
+   * Returns the run, or null when the workflow / trigger is no longer active.
+   */
+  async fireSchedule(workflowId: string, nodeId: string, scheduledFor: string, occurrenceKey: string): Promise<{ executionId: string; deduplicated: boolean } | null> {
     const wf = await this.deps.repos.workflows.get(workflowId);
-    if (!wf || wf.status !== 'active' || !wf.publishedVersionId) return;
+    if (!wf || wf.status !== 'active' || !wf.publishedVersionId) return null;
     const version = await this.deps.repos.versions.get(wf.publishedVersionId);
     const node = version?.nodes.find((n) => n.id === nodeId && n.type === 'trigger.schedule');
-    if (!node) return;
-    await this.start({
+    if (!node) return null;
+    return this.start({
       workflow: wf,
       mode: 'published',
       triggerType: 'schedule',

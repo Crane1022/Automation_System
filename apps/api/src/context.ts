@@ -47,6 +47,9 @@ export interface AppContext {
     trustProxy: boolean;
     nodeEnv: string;
     publicBaseUrl: string;
+    cronSecret: string | null;
+    cronCatchUpMs: number;
+    cronWaitMs: number;
   };
   startedAt: number;
   /** Stops queues, schedulers and Redis connections. */

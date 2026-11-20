@@ -8,6 +8,7 @@ import { workflowsRouter } from './routes/workflows.js';
 import { executionsRouter } from './routes/executions.js';
 import { publicWebhookRouter } from './routes/webhooks-public.js';
 import { publicEventsRouter } from './routes/events-public.js';
+import { cronRouter } from './routes/cron-public.js';
 import { credentialsRouter, oauthRouter } from './routes/credentials.js';
 import { templatesRouter } from './routes/templates.js';
 import { assistantRouter } from './routes/assistant.js';
@@ -36,6 +37,7 @@ export function createApp(ctx: AppContext) {
   app.use('/hooks', publicWebhookRouter(ctx));
   app.use('/events', publicEventsRouter(ctx));
   app.use('/oauth', oauthRouter(ctx));
+  app.use('/cron', cronRouter(ctx));
 
   // Authenticated JSON API.
   const { authenticate, invalidate } = createAuth({

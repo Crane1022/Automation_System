@@ -69,6 +69,30 @@ Values in `.env` that are easy to get wrong:
 - [ ] Assistant browser (optional): build the API with `docker/api-browser.Dockerfile` and set `ASSISTANT_BROWSER=true`.
 - [ ] Look at the **Activity log** page now and then — it shows who changed what.
 
+## G. Schedules on Vercel (free timer)
+
+Vercel pauses the API when nobody uses the app, so Schedule Triggers don't fire by themselves.
+An outside timer wakes it up and starts whatever is due.
+
+1. Make a secret (at least 24 characters), e.g. `node -e "console.log(require('crypto').randomBytes(24).toString('hex'))"`.
+2. Vercel → project → Settings → Environment Variables → add `CRON_SECRET` = that secret (Production). Redeploy.
+3. Check it: open `https://<your-domain>/cron/run-schedules?key=<secret>` → you see `{"ok":true,...}`.
+4. [cron-job.org](https://cron-job.org) (free) → Create cronjob:
+   - URL: `https://<your-domain>/cron/run-schedules?key=<secret>`
+   - Schedule: every 5 minutes
+   - Time zone: Asia/Kuala_Lumpur (only matters for the history view)
+   - Turn on "notify on failure".
+5. Leave `REDIS_URL` empty on Vercel (without a worker, Redis would only queue the runs).
+
+How it behaves:
+- Each call starts the latest occurrence of every active schedule if it was due in the last
+  `CRON_CATCHUP_MINUTES` (default 180) and has not run yet. A daily 9:00 AM workflow runs at 9:00–9:05.
+- Each occurrence runs **once**, however often the link is called.
+- Occurrences from before the workflow was (re)published are skipped.
+- The call waits up to `CRON_WAIT_SECONDS` (default 240) for the runs to finish, so Vercel keeps
+  the function alive. cron-job.org may show a "timeout" for long runs; the run still finishes.
+- AI Staff schedules are not covered (they need the always-on worker).
+
 ## If something goes wrong
 
 | What you see | What to do |
