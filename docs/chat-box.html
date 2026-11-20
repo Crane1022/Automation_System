@@ -178,7 +178,8 @@
     var timer = setTimeout(function () { if (ctrl) ctrl.abort(); }, 60000);
     fetch(cfg.webhook, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      // text/plain is a "simple" request: no CORS preflight, so it works on any website builder.
+      headers: { 'content-type': 'text/plain;charset=UTF-8' },
       body: JSON.stringify({ message: text, sessionId: sessionId, page: location.href, title: document.title }),
       signal: ctrl ? ctrl.signal : undefined,
     })
@@ -190,7 +191,7 @@
         var d = r.data;
         var reply = typeof d === 'string' ? d : d && (d.reply || d.output || d.message || d.text);
         if (r.ok && r.status !== 202 && reply) add('bot', String(reply), true);
-        else if (r.status === 403 && d && d.error) add('err', String(d.error), false);
+        else if (r.status >= 400 && d && typeof d === 'object' && d.error) add('err', String(d.error), false);
         else add('err', r.status === 202 ? 'Sorry, that took too long. Please try again in a moment.' : 'Sorry, something went wrong. Please try again.', false);
       })
       .catch(function () {

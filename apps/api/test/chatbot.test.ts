@@ -425,6 +425,17 @@ describe('Website chat box: webhook that sends back the reply', () => {
     expect(JSON.stringify(list.body)).not.toContain('webhookResponseJson');
   });
 
+  it('chat boxes can send JSON as text/plain (no preflight) and read why a call failed', async () => {
+    const r = await request(app).post(`/hooks/${token}`).set('origin', SITE).set('content-type', 'text/plain;charset=UTF-8').send(JSON.stringify({ message: 'plain' }));
+    expect([r.status, r.body]).toEqual([200, { reply: 'You said: plain' }]);
+    const gone = await request(app).post('/hooks/not-a-real-token-123456').set('origin', SITE).set('content-type', 'text/plain').send('{"message":"x"}');
+    expect(gone.status).toBe(404);
+    expect(gone.headers['access-control-allow-origin']).toBe(SITE);
+    expect(gone.body.error).toMatch(/not Active, or its webhook URL has changed/);
+    // Callers without a browser still get the plain 404.
+    expect((await request(app).post('/hooks/not-a-real-token-123456').send({})).body).toEqual({ error: 'Not found' });
+  });
+
   it('“*” allows any website, including page builders that run the code in a sandboxed frame', async () => {
     const anySite = await build({ bodyType: 'fields', bodyFields: [{ key: 'reply', value: 'ok' }] }, '*');
     const r = await request(app).post(`/hooks/${anySite.token}`).set('origin', 'null').set('content-type', 'application/json').send({ message: 'x' });

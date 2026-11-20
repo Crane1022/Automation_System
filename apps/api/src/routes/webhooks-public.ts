@@ -35,6 +35,17 @@ export function publicWebhookRouter(ctx: AppContext) {
     return list.includes('*') || list.includes(origin);
   };
 
+  // Let web pages read our answers, including errors ("not found", "not allowed"), so a chat box can
+  // show the real reason. Whether a website may actually START a run is checked per webhook below.
+  r.use((req, res, next) => {
+    const origin = req.header('origin');
+    if (origin) {
+      res.setHeader('Access-Control-Allow-Origin', origin);
+      res.setHeader('Vary', 'Origin');
+    }
+    next();
+  });
+
   // Browsers ask first ("preflight") before a chat box on another website may send JSON.
   // originAllowed() is checked on the real call below.
   r.options(
@@ -62,7 +73,9 @@ export function publicWebhookRouter(ctx: AppContext) {
     express.raw({ type: () => true, limit: ctx.config.webhookMaxBodyBytes }),
     ah(async (req, res) => {
       const found = await endpointNode(req.params.token);
-      if (!found) return res.status(404).json(notFound);
+      if (!found) {
+        return res.status(404).json(req.header('origin') ? { error: 'This chat is not connected: the workflow is not Active, or its webhook URL has changed. Check the Webhook step.' } : notFound);
+      }
       const { ep, wf, node } = found;
 
       // Calls from a web page carry an Origin header: only the listed websites may use this webhook.
@@ -78,7 +91,7 @@ export function publicWebhookRouter(ctx: AppContext) {
       }
 
       const method = String(node.config.method ?? 'POST');
-      if (req.method !== method) return res.status(405).json({ error: `Use ${method}` });
+      if (req.method !== method) return res.status(405).json({ error: `Use ${method} (the Webhook step is set to ${method})` });
 
       const raw: Buffer = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0);
       if (node.config.requireSignature === true) {
@@ -95,6 +108,13 @@ export function publicWebhookRouter(ctx: AppContext) {
             body = JSON.parse(text);
           } catch {
             return res.status(400).json({ error: 'Body is not valid JSON' });
+          }
+        } else if (type.includes('text/plain') && /^\s*\{[\s\S]*\}\s*$/.test(text)) {
+          // Chat boxes send JSON as text/plain: browsers then skip the extra "preflight" request.
+          try {
+            body = JSON.parse(text);
+          } catch {
+            body = text;
           }
         } else if (type.includes('application/x-www-form-urlencoded')) {
           body = Object.fromEntries(new URLSearchParams(text));
