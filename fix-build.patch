@@ -1,0 +1,27 @@
+From 66f06b62dcc533f34e94f32cfed928ab944d57a7 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Fri, 20 Nov 2026 11:09:31 +0800
+Subject: [PATCH] Fix build: lookup field name is always text
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Way2MU7LHJAr1mxzSsa49C
+---
+ packages/nodes/src/nodes/firebase.ts | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/packages/nodes/src/nodes/firebase.ts b/packages/nodes/src/nodes/firebase.ts
+index 8b0c94b..61d9349 100644
+--- a/packages/nodes/src/nodes/firebase.ts
++++ b/packages/nodes/src/nodes/firebase.ts
+@@ -152,7 +152,7 @@ export const firebaseRead = defineNode({
+         while (next < items.length) {
+           const i = next++;
+           const c = i === 0 ? first : ctx.resolve(ctx.config, items[i], i);
+-          const saveAs = c.saveAs || first.saveAs;
++          const saveAs = String(c.saveAs || first.saveAs);
+           const id = c.docId == null ? '' : String(c.docId).trim();
+           const full = join(String(c.collection).trim(), id);
+           const blank = !id || /\/\//.test(full) || full.endsWith('/') || /(^|\/)(undefined|null)(\/|$)/.test(full);
+-- 
+2.43.0
+

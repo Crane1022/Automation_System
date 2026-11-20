@@ -1,0 +1,218 @@
+From 9c1e2c798138760e5410d7d9ddcc9e3fea1f6d24 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Fri, 20 Nov 2026 11:05:34 +0800
+Subject: [PATCH] Vercel: close stuck runs, faster Firebase lookups
+
+- Cancel now closes a run that no server is running any more (past its time limit),
+  and /cron/run-schedules marks such runs failed instead of leaving them Running.
+- Firestore uses REST (preferRest): no slow gRPC start-up on each Vercel cold start.
+- Firebase lookup steps read 10 documents at a time instead of one by one.
+- Scheduled runs show 'Schedule' instead of 'External (webhook)'.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Way2MU7LHJAr1mxzSsa49C
+---
+ apps/api/src/firebase.ts                    |  2 +-
+ apps/api/src/routes/cron-public.ts          |  2 +-
+ apps/api/src/services/credential-service.ts |  3 ++-
+ apps/api/src/services/execution-service.ts  | 30 +++++++++++++++++++++
+ apps/api/src/services/schedule-tick.ts      |  5 +++-
+ apps/api/test/cron-schedules.test.ts        | 14 ++++++++++
+ apps/web/src/views/ExecutionDetailView.vue  |  2 +-
+ apps/web/src/views/ExecutionsView.vue       |  2 +-
+ packages/nodes/src/nodes/firebase.ts        | 20 ++++++++++++++
+ 9 files changed, 74 insertions(+), 6 deletions(-)
+
+diff --git a/apps/api/src/firebase.ts b/apps/api/src/firebase.ts
+index e082b33..3661c6d 100644
+--- a/apps/api/src/firebase.ts
++++ b/apps/api/src/firebase.ts
+@@ -27,6 +27,6 @@ export function initFirebase(config: Config) {
+     app = initializeApp({ credential: applicationDefault(), projectId: config.FIREBASE_PROJECT_ID });
+   }
+   const db = getFirestore(app);
+-  db.settings({ ignoreUndefinedProperties: true });
++  db.settings({ ignoreUndefinedProperties: true, preferRest: true });
+   return { app, db, auth: getAuth(app) };
+ }
+diff --git a/apps/api/src/routes/cron-public.ts b/apps/api/src/routes/cron-public.ts
+index 330b9a0..acf7098 100644
+--- a/apps/api/src/routes/cron-public.ts
++++ b/apps/api/src/routes/cron-public.ts
+@@ -29,7 +29,7 @@ export function cronRouter(ctx: AppContext) {
+     if (!secret || !given || !sameSecret(given, secret)) return res.status(404).json(notFound);
+ 
+     const result = await runDueSchedules(ctx, { catchUpMs: ctx.config.cronCatchUpMs, waitMs: ctx.config.cronWaitMs });
+-    if (result.runs.length || result.errors.length) console.log('[cron] run-schedules', JSON.stringify(result));
++    if (result.runs.length || result.errors.length || result.closedStuckRuns) console.log('[cron] run-schedules', JSON.stringify(result));
+     res.setHeader('Cache-Control', 'no-store');
+     res.json({ ok: result.errors.length === 0, ...result });
+   });
+diff --git a/apps/api/src/services/credential-service.ts b/apps/api/src/services/credential-service.ts
+index eda4194..f212585 100644
+--- a/apps/api/src/services/credential-service.ts
++++ b/apps/api/src/services/credential-service.ts
+@@ -428,7 +428,8 @@ export class CredentialService {
+             app = initializeApp({ credential: cert(serviceAccount), projectId: serviceAccount.project_id }, appName);
+           }
+           const fs = getFirestore(app);
+-          fs.settings({ ignoreUndefinedProperties: true });
++          // preferRest: no slow gRPC start-up on serverless hosting (Vercel), where each cold start reconnects.
++          fs.settings({ ignoreUndefinedProperties: true, preferRest: true });
+           return fs;
+         })();
+     this.firestores.set(c.credentialId, db);
+diff --git a/apps/api/src/services/execution-service.ts b/apps/api/src/services/execution-service.ts
+index 5e16916..0b3e2d0 100644
+--- a/apps/api/src/services/execution-service.ts
++++ b/apps/api/src/services/execution-service.ts
+@@ -178,11 +178,41 @@ export class ExecutionService {
+         return { status: 'cancelled' };
+       }
+     }
++    // Without Redis, a run this process doesn't own and that is past its time limit can't still be
++    // running: the server that ran it was stopped or paused (e.g. Vercel). Close it now.
++    if (this.isAbandoned(exec)) {
++      await this.finalize(executionId, 'cancelled', 'Cancelled. The server running it had stopped (it was stuck).', exec.startedAt, exec.stepCount);
++      return { status: 'cancelled' };
++    }
+     // Running (or just picked up): ask whichever process runs it to stop.
+     await this.deps.bus.requestCancel(executionId);
+     return { status: 'requested' };
+   }
+ 
++  /** In-process mode: not running here and older than the time limit (+2 min) → nobody is running it. */
++  private isAbandoned(exec: StoredExecution, now = Date.now()) {
++    if (this.deps.queue.mode !== 'in-process' || this.controllers.has(exec.executionId)) return false;
++    if (!['pending', 'queued', 'running'].includes(exec.status)) return false;
++    const since = Date.parse(exec.startedAt ?? exec.createdAt);
++    return Number.isFinite(since) && now - since > this.deps.timeoutMs + 120_000;
++  }
++
++  /**
++   * Marks runs that were left "running" by a stopped/paused server as failed, so they don't
++   * stay "Running" forever. Called by /cron/run-schedules. Returns how many were closed.
++   */
++  async failAbandoned(now = Date.now()): Promise<number> {
++    if (this.deps.queue.mode !== 'in-process') return 0;
++    const open = await this.deps.repos.executions.listByStatus(['pending', 'queued', 'running'], 200);
++    let n = 0;
++    for (const e of open) {
++      if (!this.isAbandoned(e, now)) continue;
++      await this.finalize(e.executionId, 'failed', 'Stopped: the server running it was paused or restarted before it finished (it went over the time limit).', e.startedAt, e.stepCount);
++      n++;
++    }
++    return n;
++  }
++
+   async retry(executionId: string, actorId: string): Promise<{ executionId: string }> {
+     const { repos } = this.deps;
+     const exec = await repos.executions.get(executionId);
+diff --git a/apps/api/src/services/schedule-tick.ts b/apps/api/src/services/schedule-tick.ts
+index 2d1ac41..68734b6 100644
+--- a/apps/api/src/services/schedule-tick.ts
++++ b/apps/api/src/services/schedule-tick.ts
+@@ -37,6 +37,8 @@ export function lastRun(cfg: ScheduleConfig, now: number): number | null {
+ 
+ export interface TickResult {
+   checkedWorkflows: number;
++  /** Runs that were stuck "running" (server paused) and are now marked failed. */
++  closedStuckRuns: number;
+   runs: { workflowId: string; workflowName: string; scheduledFor: string; executionId: string; alreadyStarted: boolean; status: string }[];
+   errors: { workflowId: string; error: string }[];
+ }
+@@ -52,7 +54,8 @@ export interface TickOptions {
+ 
+ export async function runDueSchedules(ctx: AppContext, opts: TickOptions): Promise<TickResult> {
+   const now = opts.now ?? Date.now();
+-  const result: TickResult = { checkedWorkflows: 0, runs: [], errors: [] };
++  const result: TickResult = { checkedWorkflows: 0, closedStuckRuns: 0, runs: [], errors: [] };
++  result.closedStuckRuns = await ctx.executions.failAbandoned(now).catch(() => 0);
+ 
+   const active = await ctx.repos.workflows.listActive(1000);
+   for (const wf of active) {
+diff --git a/apps/api/test/cron-schedules.test.ts b/apps/api/test/cron-schedules.test.ts
+index d762bfe..c3c20f1 100644
+--- a/apps/api/test/cron-schedules.test.ts
++++ b/apps/api/test/cron-schedules.test.ts
+@@ -96,6 +96,20 @@ describe('/cron/run-schedules', () => {
+     const list = await request(app).get('/api/executions').query({ workflowId: id }).set(as);
+     expect(list.body.items).toHaveLength(1);
+ 
++    // A run left "running" by a paused server is closed by the next call, and Cancel works on it.
++    const done = (await repos.executions.get(mine[0]!.executionId))!;
++    const old = new Date(Date.now() - 60 * 60_000).toISOString();
++    await repos.executions.createIfAbsent({ ...done, executionId: 'exe_stuck_1', status: 'running', startedAt: old, createdAt: old, completedAt: null });
++    await repos.executions.createIfAbsent({ ...done, executionId: 'exe_stuck_2', status: 'running', startedAt: old, createdAt: old, completedAt: null });
++    await repos.executions.createIfAbsent({ ...done, executionId: 'exe_fresh', status: 'running', startedAt: new Date().toISOString(), completedAt: null });
++    expect((await request(app).post('/api/executions/exe_stuck_1/cancel').set(as)).status).toBeLessThan(300);
++    expect((await repos.executions.get('exe_stuck_1'))!.status).toBe('cancelled');
++    const sweep = await runDueSchedules(ctx, { catchUpMs: 1, waitMs: 0 });
++    expect(sweep.closedStuckRuns).toBe(1);
++    expect((await repos.executions.get('exe_stuck_2'))!.status).toBe('failed');
++    expect((await repos.executions.get('exe_fresh'))!.status).toBe('running'); // may really be running elsewhere
++    await repos.executions.update('exe_fresh', { status: 'cancelled' });
++
+     // An occurrence from before the version was published is not run.
+     const before = await runDueSchedules(ctx, { now: Date.now() - 2 * 60_000, catchUpMs: 3 * 3_600_000, waitMs: 0 });
+     expect(before.runs.filter((r) => r.workflowId === id)).toHaveLength(0);
+diff --git a/apps/web/src/views/ExecutionDetailView.vue b/apps/web/src/views/ExecutionDetailView.vue
+index 2c89eff..e3021a9 100644
+--- a/apps/web/src/views/ExecutionDetailView.vue
++++ b/apps/web/src/views/ExecutionDetailView.vue
+@@ -107,7 +107,7 @@ onBeforeUnmount(() => stop?.());
+         <div class="p-3"><div class="label">Version</div><div class="text-[13px]">{{ exec.isTestRun ? 'Draft (test run)' : `v${exec.workflowVersion}` }}</div></div>
+         <div class="p-3"><div class="label">Started</div><div class="text-[13px]">{{ formatDate(exec.startedAt ?? exec.createdAt) }}</div></div>
+         <div class="p-3"><div class="label">Duration</div><div class="text-[13px] tabular-nums">{{ formatDuration(exec.duration) }}</div></div>
+-        <div class="p-3"><div class="label">Initiated by</div><div class="text-[13px] truncate">{{ exec.initiatedBy === auth.profile?.uid ? 'You' : exec.initiatedBy ?? 'External (webhook)' }}</div></div>
++        <div class="p-3"><div class="label">Initiated by</div><div class="text-[13px] truncate">{{ exec.initiatedBy === auth.profile?.uid ? 'You' : exec.initiatedBy ?? (exec.triggerType === 'schedule' ? 'Schedule' : 'External (webhook)') }}</div></div>
+       </div>
+       <div v-if="exec.errorSummary" class="rounded-md bg-bad-soft text-bad text-[13px] p-3 mb-4">{{ exec.errorSummary }}</div>
+       <div v-if="exec.retryOf" class="text-[12px] text-muted mb-4">Retry of <RouterLink :to="`/executions/${exec.retryOf}`" class="text-brand underline">{{ exec.retryOf }}</RouterLink></div>
+diff --git a/apps/web/src/views/ExecutionsView.vue b/apps/web/src/views/ExecutionsView.vue
+index d93ef48..7b85f5d 100644
+--- a/apps/web/src/views/ExecutionsView.vue
++++ b/apps/web/src/views/ExecutionsView.vue
+@@ -109,7 +109,7 @@ onMounted(async () => {
+             <td class="table-cell text-muted">{{ formatDate(e.startedAt ?? e.createdAt) }}</td>
+             <td class="table-cell text-muted tabular-nums">{{ formatDuration(e.duration) }}</td>
+             <td class="table-cell"><StatusBadge :status="e.status" /></td>
+-            <td class="table-cell text-muted text-[12px]">{{ e.initiatedBy === auth.profile?.uid ? 'You' : e.initiatedBy ?? 'External (webhook)' }}</td>
++            <td class="table-cell text-muted text-[12px]">{{ e.initiatedBy === auth.profile?.uid ? 'You' : e.initiatedBy ?? (e.triggerType === 'schedule' ? 'Schedule' : 'External (webhook)') }}</td>
+           </tr>
+         </tbody>
+       </table>
+diff --git a/packages/nodes/src/nodes/firebase.ts b/packages/nodes/src/nodes/firebase.ts
+index c0b4613..8b0c94b 100644
+--- a/packages/nodes/src/nodes/firebase.ts
++++ b/packages/nodes/src/nodes/firebase.ts
+@@ -143,6 +143,26 @@ export const firebaseRead = defineNode({
+     const fs = await access(ctx);
+     const out: Item[] = [];
+     const items = ctx.items.length ? ctx.items : [{ json: {} }];
++    const first = ctx.resolve(ctx.config, items[0], 0);
++    if (first.mode === 'get' && first.saveAs) {
++      // Lookup mode: one read per item, 10 at a time (one by one was too slow for hundreds of bookings).
++      const results: Item[] = new Array(items.length);
++      let next = 0;
++      const worker = async () => {
++        while (next < items.length) {
++          const i = next++;
++          const c = i === 0 ? first : ctx.resolve(ctx.config, items[i], i);
++          const saveAs = c.saveAs || first.saveAs;
++          const id = c.docId == null ? '' : String(c.docId).trim();
++          const full = join(String(c.collection).trim(), id);
++          const blank = !id || /\/\//.test(full) || full.endsWith('/') || /(^|\/)(undefined|null)(\/|$)/.test(full);
++          const doc = blank ? null : await fs.get(full);
++          results[i] = { json: { ...items[i]!.json, [saveAs]: doc ? { id: doc.id, ...doc.data } : null } };
++        }
++      };
++      await Promise.all(Array.from({ length: Math.min(10, items.length) }, worker));
++      return { outputs: { main: results } };
++    }
+     for (let i = 0; i < items.length; i++) {
+       const c = ctx.resolve(ctx.config, items[i], i);
+       if (c.mode === 'get' && c.saveAs) {
+-- 
+2.43.0
+
