@@ -3,7 +3,7 @@ import { initFirebase } from './firebase.js';
 import { createFirestoreRepositories } from './repositories/firestore.js';
 import { createFirebaseVerifier } from './auth/verifier.js';
 import { createFirebaseDirectory } from './auth/user-directory.js';
-import { buildContext, startProcessing } from './bootstrap.js';
+import { buildContext } from './bootstrap.js';
 import { createApp } from './create-app.js';
 
 /**
@@ -25,8 +25,12 @@ const repos = createFirestoreRepositories(db, { retentionDays: config.EXECUTION_
 const ctx = buildContext(config, repos, createFirebaseVerifier(auth), { directory: createFirebaseDirectory(auth) });
 
 if (!config.REDIS_URL) {
-  console.warn('[vercel] No REDIS_URL: workflow runs happen inside the API function (best effort). Schedules will not fire reliably.');
-  startProcessing(ctx);
+  console.warn('[vercel] No REDIS_URL: workflow runs happen inside the API function. Schedules are started only by /cron/run-schedules.');
+  // Run jobs here, but do NOT let the in-memory timers start schedules: a run started by a timer has no
+  // open request, so Vercel pauses it halfway (it stays "Running"). /cron/run-schedules starts them
+  // instead and keeps its request open until the run has finished.
+  ctx.executions.startWorker();
+  ctx.agentTasks.startWorker();
 }
 
 const app = createApp(ctx);
