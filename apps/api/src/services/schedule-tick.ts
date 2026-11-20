@@ -37,6 +37,8 @@ export function lastRun(cfg: ScheduleConfig, now: number): number | null {
 
 export interface TickResult {
   checkedWorkflows: number;
+  /** Runs that were stuck "running" (server paused) and are now marked failed. */
+  closedStuckRuns: number;
   runs: { workflowId: string; workflowName: string; scheduledFor: string; executionId: string; alreadyStarted: boolean; status: string }[];
   errors: { workflowId: string; error: string }[];
 }
@@ -52,7 +54,8 @@ export interface TickOptions {
 
 export async function runDueSchedules(ctx: AppContext, opts: TickOptions): Promise<TickResult> {
   const now = opts.now ?? Date.now();
-  const result: TickResult = { checkedWorkflows: 0, runs: [], errors: [] };
+  const result: TickResult = { checkedWorkflows: 0, closedStuckRuns: 0, runs: [], errors: [] };
+  result.closedStuckRuns = await ctx.executions.failAbandoned(now).catch(() => 0);
 
   const active = await ctx.repos.workflows.listActive(1000);
   for (const wf of active) {

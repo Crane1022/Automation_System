@@ -109,7 +109,7 @@ onMounted(async () => {
             <td class="table-cell text-muted">{{ formatDate(e.startedAt ?? e.createdAt) }}</td>
             <td class="table-cell text-muted tabular-nums">{{ formatDuration(e.duration) }}</td>
             <td class="table-cell"><StatusBadge :status="e.status" /></td>
-            <td class="table-cell text-muted text-[12px]">{{ e.initiatedBy === auth.profile?.uid ? 'You' : e.initiatedBy ?? 'External (webhook)' }}</td>
+            <td class="table-cell text-muted text-[12px]">{{ e.initiatedBy === auth.profile?.uid ? 'You' : e.initiatedBy ?? (e.triggerType === 'schedule' ? 'Schedule' : 'External (webhook)') }}</td>
           </tr>
         </tbody>
       </table>

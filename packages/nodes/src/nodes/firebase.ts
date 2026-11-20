@@ -143,6 +143,26 @@ export const firebaseRead = defineNode({
     const fs = await access(ctx);
     const out: Item[] = [];
     const items = ctx.items.length ? ctx.items : [{ json: {} }];
+    const first = ctx.resolve(ctx.config, items[0], 0);
+    if (first.mode === 'get' && first.saveAs) {
+      // Lookup mode: one read per item, 10 at a time (one by one was too slow for hundreds of bookings).
+      const results: Item[] = new Array(items.length);
+      let next = 0;
+      const worker = async () => {
+        while (next < items.length) {
+          const i = next++;
+          const c = i === 0 ? first : ctx.resolve(ctx.config, items[i], i);
+          const saveAs = c.saveAs || first.saveAs;
+          const id = c.docId == null ? '' : String(c.docId).trim();
+          const full = join(String(c.collection).trim(), id);
+          const blank = !id || /\/\//.test(full) || full.endsWith('/') || /(^|\/)(undefined|null)(\/|$)/.test(full);
+          const doc = blank ? null : await fs.get(full);
+          results[i] = { json: { ...items[i]!.json, [saveAs]: doc ? { id: doc.id, ...doc.data } : null } };
+        }
+      };
+      await Promise.all(Array.from({ length: Math.min(10, items.length) }, worker));
+      return { outputs: { main: results } };
+    }
     for (let i = 0; i < items.length; i++) {
       const c = ctx.resolve(ctx.config, items[i], i);
       if (c.mode === 'get' && c.saveAs) {

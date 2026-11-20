@@ -27,6 +27,6 @@ export function initFirebase(config: Config) {
     app = initializeApp({ credential: applicationDefault(), projectId: config.FIREBASE_PROJECT_ID });
   }
   const db = getFirestore(app);
-  db.settings({ ignoreUndefinedProperties: true });
+  db.settings({ ignoreUndefinedProperties: true, preferRest: true });
   return { app, db, auth: getAuth(app) };
 }

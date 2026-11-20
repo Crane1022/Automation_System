@@ -178,9 +178,39 @@ export class ExecutionService {
         return { status: 'cancelled' };
       }
     }
+    // Without Redis, a run this process doesn't own and that is past its time limit can't still be
+    // running: the server that ran it was stopped or paused (e.g. Vercel). Close it now.
+    if (this.isAbandoned(exec)) {
+      await this.finalize(executionId, 'cancelled', 'Cancelled. The server running it had stopped (it was stuck).', exec.startedAt, exec.stepCount);
+      return { status: 'cancelled' };
+    }
     // Running (or just picked up): ask whichever process runs it to stop.
     await this.deps.bus.requestCancel(executionId);
     return { status: 'requested' };
+  }
+
+  /** In-process mode: not running here and older than the time limit (+2 min) → nobody is running it. */
+  private isAbandoned(exec: StoredExecution, now = Date.now()) {
+    if (this.deps.queue.mode !== 'in-process' || this.controllers.has(exec.executionId)) return false;
+    if (!['pending', 'queued', 'running'].includes(exec.status)) return false;
+    const since = Date.parse(exec.startedAt ?? exec.createdAt);
+    return Number.isFinite(since) && now - since > this.deps.timeoutMs + 120_000;
+  }
+
+  /**
+   * Marks runs that were left "running" by a stopped/paused server as failed, so they don't
+   * stay "Running" forever. Called by /cron/run-schedules. Returns how many were closed.
+   */
+  async failAbandoned(now = Date.now()): Promise<number> {
+    if (this.deps.queue.mode !== 'in-process') return 0;
+    const open = await this.deps.repos.executions.listByStatus(['pending', 'queued', 'running'], 200);
+    let n = 0;
+    for (const e of open) {
+      if (!this.isAbandoned(e, now)) continue;
+      await this.finalize(e.executionId, 'failed', 'Stopped: the server running it was paused or restarted before it finished (it went over the time limit).', e.startedAt, e.stepCount);
+      n++;
+    }
+    return n;
   }
 
   async retry(executionId: string, actorId: string): Promise<{ executionId: string }> {

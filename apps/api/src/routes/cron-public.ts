@@ -29,7 +29,7 @@ export function cronRouter(ctx: AppContext) {
     if (!secret || !given || !sameSecret(given, secret)) return res.status(404).json(notFound);
 
     const result = await runDueSchedules(ctx, { catchUpMs: ctx.config.cronCatchUpMs, waitMs: ctx.config.cronWaitMs });
-    if (result.runs.length || result.errors.length) console.log('[cron] run-schedules', JSON.stringify(result));
+    if (result.runs.length || result.errors.length || result.closedStuckRuns) console.log('[cron] run-schedules', JSON.stringify(result));
     res.setHeader('Cache-Control', 'no-store');
     res.json({ ok: result.errors.length === 0, ...result });
   });

@@ -428,7 +428,8 @@ export class CredentialService {
             app = initializeApp({ credential: cert(serviceAccount), projectId: serviceAccount.project_id }, appName);
           }
           const fs = getFirestore(app);
-          fs.settings({ ignoreUndefinedProperties: true });
+          // preferRest: no slow gRPC start-up on serverless hosting (Vercel), where each cold start reconnects.
+          fs.settings({ ignoreUndefinedProperties: true, preferRest: true });
           return fs;
         })();
     this.firestores.set(c.credentialId, db);

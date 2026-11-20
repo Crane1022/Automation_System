@@ -107,7 +107,7 @@ onBeforeUnmount(() => stop?.());
         <div class="p-3"><div class="label">Version</div><div class="text-[13px]">{{ exec.isTestRun ? 'Draft (test run)' : `v${exec.workflowVersion}` }}</div></div>
         <div class="p-3"><div class="label">Started</div><div class="text-[13px]">{{ formatDate(exec.startedAt ?? exec.createdAt) }}</div></div>
         <div class="p-3"><div class="label">Duration</div><div class="text-[13px] tabular-nums">{{ formatDuration(exec.duration) }}</div></div>
-        <div class="p-3"><div class="label">Initiated by</div><div class="text-[13px] truncate">{{ exec.initiatedBy === auth.profile?.uid ? 'You' : exec.initiatedBy ?? 'External (webhook)' }}</div></div>
+        <div class="p-3"><div class="label">Initiated by</div><div class="text-[13px] truncate">{{ exec.initiatedBy === auth.profile?.uid ? 'You' : exec.initiatedBy ?? (exec.triggerType === 'schedule' ? 'Schedule' : 'External (webhook)') }}</div></div>
       </div>
       <div v-if="exec.errorSummary" class="rounded-md bg-bad-soft text-bad text-[13px] p-3 mb-4">{{ exec.errorSummary }}</div>
       <div v-if="exec.retryOf" class="text-[12px] text-muted mb-4">Retry of <RouterLink :to="`/executions/${exec.retryOf}`" class="text-brand underline">{{ exec.retryOf }}</RouterLink></div>

@@ -96,6 +96,20 @@ describe('/cron/run-schedules', () => {
     const list = await request(app).get('/api/executions').query({ workflowId: id }).set(as);
     expect(list.body.items).toHaveLength(1);
 
+    // A run left "running" by a paused server is closed by the next call, and Cancel works on it.
+    const done = (await repos.executions.get(mine[0]!.executionId))!;
+    const old = new Date(Date.now() - 60 * 60_000).toISOString();
+    await repos.executions.createIfAbsent({ ...done, executionId: 'exe_stuck_1', status: 'running', startedAt: old, createdAt: old, completedAt: null });
+    await repos.executions.createIfAbsent({ ...done, executionId: 'exe_stuck_2', status: 'running', startedAt: old, createdAt: old, completedAt: null });
+    await repos.executions.createIfAbsent({ ...done, executionId: 'exe_fresh', status: 'running', startedAt: new Date().toISOString(), completedAt: null });
+    expect((await request(app).post('/api/executions/exe_stuck_1/cancel').set(as)).status).toBeLessThan(300);
+    expect((await repos.executions.get('exe_stuck_1'))!.status).toBe('cancelled');
+    const sweep = await runDueSchedules(ctx, { catchUpMs: 1, waitMs: 0 });
+    expect(sweep.closedStuckRuns).toBe(1);
+    expect((await repos.executions.get('exe_stuck_2'))!.status).toBe('failed');
+    expect((await repos.executions.get('exe_fresh'))!.status).toBe('running'); // may really be running elsewhere
+    await repos.executions.update('exe_fresh', { status: 'cancelled' });
+
     // An occurrence from before the version was published is not run.
     const before = await runDueSchedules(ctx, { now: Date.now() - 2 * 60_000, catchUpMs: 3 * 3_600_000, waitMs: 0 });
     expect(before.runs.filter((r) => r.workflowId === id)).toHaveLength(0);
