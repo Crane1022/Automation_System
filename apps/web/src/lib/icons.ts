@@ -29,6 +29,7 @@ import {
   BotMessageSquare,
   Reply,
   Package,
+  MessageSquareX,
 } from '@lucide/vue';
 import type { Component } from 'vue';
 
@@ -63,6 +64,7 @@ const map: Record<string, Component> = {
   'bot-message-square': BotMessageSquare,
   reply: Reply,
   package: Package,
+  'message-square-x': MessageSquareX,
 };
 
 export const iconFor = (name: string): Component => map[name] ?? Box;

@@ -297,6 +297,92 @@ export const BUILT_IN_TEMPLATES: WorkflowTemplate[] = [
     ),
   }),
   builtIn({
+    templateId: 'tpl_ai_website_guest_chat',
+    name: 'AI: website chat that knows the guest',
+    description: 'Website chat box that first asks the visitor’s name, phone (with country code) and email, welcomes back guests found in Firebase, sorts each question by type and answers from the matching Google Sheets tab. “End chat” forgets the conversation.',
+    category: 'AI',
+    needs: [
+      AI_NEED,
+      GOOGLE,
+      'A Firebase connection to Widebed PMS (read-only is enough) whose allowed collections include tenants/*/private (the PMS keeps each guest’s name, phone and email there).',
+      'A Google Sheet with a “System Prompt” tab and one tab per kind of question (row 1 = column names).',
+      'The chat box HTML block (docs/chat-box.html) on your website, with askDetails: true.',
+    ],
+    setup: [
+      'On “Chat message”, list your website under “Websites that may call it”.',
+      'On “Find guest by phone” / “by email”: choose the PMS Firebase connection. They search tenants/*/private by phoneKey (60123456789, like the PMS) and email; the email search needs one Firestore index (private: kind + email, collection group).',
+      'On “Sort the question”: choose the AI connection. Each category name must be exactly the name of a tab in your sheet.',
+      'On “System Prompt” and “Answer the question”: choose the Google account and paste the sheet link; on “Answer the question” also choose the AI connection.',
+      'Publish, switch to Active, copy the webhook URL into the chat box HTML block.',
+    ],
+    definition: {
+      schemaVersion: 1,
+      settings: {},
+      nodes: [
+        { ...n('g1', 'trigger.webhook', 'Chat message', {
+          method: 'POST',
+          requireSignature: false,
+          responseMode: 'reply',
+          allowedOrigins: '',
+          testData: JSON.stringify({ action: 'message', message: 'What time is check-in?', sessionId: 'test-visitor-1', page: 'https://www.widebed.com/guest-support', profile: { name: 'Test Guest', phone: '+60123456789', phoneKey: '60123456789', countryCode: '+60', phoneNumber: '123456789', email: 'test@example.com' } }, null, 2),
+        }), position: { x: 0, y: 240 } },
+        { ...n('g2', 'logic.switch', 'What did the visitor do?', {
+          value: '{{ $json.body.action }}',
+          cases: [
+            { id: 'c_start', label: 'start', value: 'start' },
+            { id: 'c_message', label: 'message', value: 'message' },
+            { id: 'c_end', label: 'end', value: 'end' },
+          ],
+          caseSensitive: false,
+        }), position: { x: 320, y: 240 } },
+        // Filled in the details form → look the guest up.
+        { ...n('g3', 'data.firebaseRead', 'Find guest by phone', { mode: 'query', collection: 'tenants/*/private', where: [{ field: 'kind', op: '==', value: 'tenant' }, { field: 'phoneKey', op: '==', value: '"{{ $json.body.profile.phoneKey }}"' }], limit: 1, saveAs: 'guestByPhone' }, true), position: { x: 640, y: 0 } },
+        { ...n('g4', 'data.firebaseRead', 'Find guest by email', { mode: 'query', collection: 'tenants/*/private', where: [{ field: 'kind', op: '==', value: 'tenant' }, { field: 'email', op: '==', value: "{{ $json.guestByPhone ? '' : $json.body.profile.email }}" }], limit: 1, saveAs: 'guestByEmail' }, true), position: { x: 960, y: 0 } },
+        { ...n('g5', 'logic.if', 'Returning guest?', { conditions: [{ left: '{{ $json.guestByPhone || $json.guestByEmail }}', operator: 'isNotEmpty', right: '' }], combine: 'and' }), position: { x: 1280, y: 0 } },
+        { ...n('g6', 'comm.respondWebhook', 'Welcome back', { bodyType: 'fields', bodyFields: [{ key: 'reply', value: 'Welcome back, {{ $json.body.profile.name }}! Great to see you again. How can I help you today?' }], text: '', statusCode: 200 }), position: { x: 1600, y: -80 } },
+        { ...n('g7', 'comm.respondWebhook', 'Welcome a new guest', { bodyType: 'fields', bodyFields: [{ key: 'reply', value: 'Hi {{ $json.body.profile.name }}, nice to meet you! What are you looking for today? For example a place to stay, prices, your booking or help during your stay.' }], text: '', statusCode: 200 }), position: { x: 1600, y: 80 } },
+        // A question → sort it, read the bot's instructions, answer from the matching tab.
+        { ...n('g8', 'ai.classify', 'Sort the question', {
+          text: '{{ $json.body.message }}',
+          categories: [
+            { id: 'c_booking', label: 'Booking Details', value: 'About an existing booking: booking number, the guest’s dates, payment of their booking, extending or changing their stay' },
+            { id: 'c_units', label: 'Property Units', value: 'About a unit or property: address, directions, parking, Wi-Fi, facilities, rooms, check-in steps' },
+            { id: 'c_maint', label: 'Maintenance Data', value: 'Something is broken, dirty or not working; repairs and cleaning' },
+            { id: 'c_team', label: 'Customer Service Team', value: 'Wants to talk to a person, contact numbers, complaints' },
+            { id: 'c_faq', label: 'FAQ', value: 'General questions: prices, availability, how to book, policies, house rules, check-in and check-out times' },
+          ],
+          instructions: 'Greetings, thanks and short replies such as “yes” or “ok” belong to FAQ.',
+        }, true), position: { x: 640, y: 280 } },
+        { ...n('g9', 'comm.sheetsRead', 'System Prompt', { spreadsheet: '', sheet: 'System Prompt', headerRow: 1, filters: [], returnMode: 'first', valueMode: 'formatted' }, true), position: { x: 960, y: 280 } },
+        { ...n('g10', 'ai.chatbot', 'Answer the question', {
+          message: "{{ $('Chat message').item.json.body.message }}",
+          instructions: "{{ $json['System Prompt:'] }}\n\n[SYSTEM DATA]\nGuest name: {{ $('Chat message').item.json.body.profile.name }}\nGuest phone: {{ $('Chat message').item.json.body.profile.phone }}\nGuest email: {{ $('Chat message').item.json.body.profile.email }}\nToday's Date: {{ $today }}\nType of question: {{ $('Sort the question').item.json.category }}\nSearch the list “Best list for this question” first.",
+          conversationId: "{{ $('Chat message').item.json.body.sessionId }}",
+          memoryMessages: 40,
+          googleConnection: '',
+          lookups: [
+            { name: 'Best list for this question', spreadsheet: '', sheet: "{{ $('Sort the question').item.json.category === 'Other' ? 'FAQ' : $('Sort the question').item.json.category }}", description: 'The tab that matches the type of question. Search it first.' },
+            { name: 'Booking Details', spreadsheet: '', sheet: 'Booking Details', description: 'Bookings by guest name, phone and booking number. Use it to check who the guest is before sharing booking or unit details.' },
+          ],
+          maxLookups: 4,
+          saveAs: 'output',
+        }, true), position: { x: 1280, y: 280 } },
+        { ...n('g11', 'comm.respondWebhook', 'Send the answer', { bodyType: 'fields', bodyFields: [{ key: 'reply', value: '{{ $json.output }}' }], text: '', statusCode: 200 }), position: { x: 1600, y: 280 } },
+        // End chat → forget the conversation.
+        { ...n('g12', 'ai.chatForget', 'Forget the conversation', { conversationId: '{{ $json.body.sessionId }}' }), position: { x: 640, y: 520 } },
+        { ...n('g13', 'comm.respondWebhook', 'Chat ended', { bodyType: 'fields', bodyFields: [{ key: 'reply', value: 'Chat ended. Thank you for chatting with Widebed!' }], text: '', statusCode: 200 }), position: { x: 960, y: 520 } },
+      ],
+      connections: [
+        ['g1', 'main', 'g2'],
+        ['g2', 'c_start', 'g3'], ['g3', 'main', 'g4'], ['g4', 'main', 'g5'], ['g5', 'true', 'g6'], ['g5', 'false', 'g7'],
+        ['g2', 'c_message', 'g8'], ['g2', 'otherwise', 'g8'],
+        ['g8', 'c_booking', 'g9'], ['g8', 'c_units', 'g9'], ['g8', 'c_maint', 'g9'], ['g8', 'c_team', 'g9'], ['g8', 'c_faq', 'g9'], ['g8', 'otherwise', 'g9'],
+        ['g9', 'main', 'g10'], ['g10', 'main', 'g11'],
+        ['g2', 'c_end', 'g12'], ['g12', 'main', 'g13'],
+      ].map(([source, sourceHandle, target], i) => ({ id: `c${i + 1}`, source: source!, sourceHandle: sourceHandle!, target: target!, targetHandle: 'main' })),
+    },
+  }),
+  builtIn({
     templateId: 'tpl_ai_live_chat',
     name: 'AI: live chat guest assistant (GoHighLevel)',
     description: 'Answers every new GoHighLevel live-chat or WhatsApp message with AI, remembers each guest’s conversation and looks up bookings and units in Google Sheets — like the “Willow” n8n bot.',

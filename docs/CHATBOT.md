@@ -77,3 +77,14 @@ and stay “Running”. So on Vercel without Redis, a webhook call now **stays o
 - **JSON tab** on every step — see and edit every setting at once, copy it, or **Paste from n8n** (select a node in n8n, Ctrl+C, paste).
 - **Code steps** — IT Admins by default. An Admin can allow everyone who builds workflows in **Settings → Code steps**. Code always runs in a sandbox with no internet, a time limit and a memory limit.
 - **Team steps** — on any step click **Save for team**, tick the boxes the team may change, and it appears under **My team's steps** in the step list. Fixing the saved step fixes every workflow that uses it. "Change all settings here instead" turns it back into a normal step.
+
+## Website chat that knows the guest (23 Nov 2026)
+
+Template **“AI: website chat that knows the guest”** (file `willow-website-guest-chat.widebed.json`) with the chat box block `docs/chat-box.html` (`askDetails: true`):
+
+- **First visit:** the chat box asks Name, Phone (country code list, default +60) and Email. It sends `action: "start"` with `profile = { name, phone: "+60123456789", countryCode, phoneNumber, email }`.
+- **Find guest by phone / by email** (Firebase Read, query + “Add to each incoming item as”) → **Returning guest?** → *Welcome back* or *Hi …, what are you looking for?*
+- **Each question** (`action: "message"`): **Sort the question** (AI, category names = Google Sheets tab names) → **System Prompt** → **Answer the question** (AI Chatbot; searches the matching tab first, Booking Details to check the guest) → reply.
+- **End chat** (`action: "end"`, shown after `idleMinutes` without a message): **AI Chatbot: End Chat** forgets the conversation; the box clears the visitor's details and starts like a first visit.
+- Guests are the PMS tenants: `tenants/{id}/private/main` with `kind: "tenant"`, `name`, `phone`, `phoneKey` (digits with country code, e.g. 60123456789, made by the PMS `phoneKey()`), `email`. The steps search **tenants/*/private** (a new Firebase Read option: `*` = every document) by `phoneKey`, then by `email` only if the phone was not found. The PMS Firebase connection must allow `tenants/*/private`.
+- The email search needs a Firestore index in the PMS project (collection group `private`: `kind` ASC + `email` ASC); the phone search uses the index the PMS already has. A value in double quotes in a Firebase filter (`"{{ … }}"`) is compared as text, so digit-only phone keys are not turned into numbers.

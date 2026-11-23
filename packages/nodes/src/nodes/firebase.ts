@@ -18,7 +18,7 @@ const collectionField: FieldDescriptor = {
   required: true,
   expressions: true,
   placeholder: 'bookings',
-  help: 'Must be in the credential’s allowed collections. Sub-collections: tenants/{{ $json.tenantId }}/payments',
+  help: 'Must be in the credential’s allowed collections. Sub-collections: tenants/{{ $json.tenantId }}/payments. Query mode can also search the same sub-collection of every document: tenants/*/private.',
 };
 const docIdField = (required: boolean): FieldDescriptor => ({
   key: 'docId',
@@ -107,8 +107,7 @@ export const firebaseRead = defineNode({
         label: 'Add to each incoming item as (optional)',
         type: 'string',
         placeholder: 'guest',
-        showIf: { key: 'mode', equals: ['get'] },
-        help: 'Look up a document for every item and keep the item: the document goes in this field ({{ $json.guest.email }}). Empty or not found → null, and the item still continues. Leave empty to output only the document.',
+        help: 'Look up for every item and keep the item: the document (in “Query” mode: the first match) goes in this field ({{ $json.guest.email }}). Not found → null, and the item still continues, so an IF step can check “found or not”. Leave empty to output only the documents.',
       },
       { key: 'where', label: 'Filters', type: 'firestoreFilters', expressions: true, default: [], showIf: { key: 'mode', equals: ['query'] } },
       { key: 'orderBy', label: 'Order by field', type: 'string', showIf: { key: 'mode', equals: ['query'] } },
@@ -127,7 +126,7 @@ export const firebaseRead = defineNode({
     ],
     true,
     'One item per document: { id, path, ...fields }. Timestamps become ISO date strings.',
-    '### Firebase Read\nQuery mode returns one item per matching document. “One document” returns nothing (and later nodes are skipped) if it does not exist.\n\n**Look up for each item:** in “One document” mode, fill in “Add to each incoming item as” (e.g. `guest`). Every item then keeps its own fields and gets the document in that field — like a VLOOKUP. A missing document gives `null` instead of stopping.\nFiltering on one field and ordering by another may need a Firestore index in that project — the error message contains a link to create it.',
+    '### Firebase Read\nQuery mode returns one item per matching document. “One document” returns nothing (and later nodes are skipped) if it does not exist.\n\n**Find a guest (found / not found):** Query mode with a filter such as `phone` == `{{ $json.body.profile.phone }}` and “Add to each incoming item as” = `guest`. The item continues with `guest` = the first match or `null`; an IF step on `{{ $json.guest }}` *is not empty* then splits returning and new guests. Put a value in double quotes (`\"{{ $json.phoneKey }}\"`) to compare it as text, not as a number.\n\n**Look up for each item:** in “One document” mode, fill in “Add to each incoming item as” (e.g. `guest`). Every item then keeps its own fields and gets the document in that field — like a VLOOKUP. A missing document gives `null` instead of stopping.\nFiltering on one field and ordering by another may need a Firestore index in that project — the error message contains a link to create it.',
   ),
   configSchema: z.object({
     mode: z.enum(['query', 'get']).default('query'),
@@ -165,6 +164,20 @@ export const firebaseRead = defineNode({
     }
     for (let i = 0; i < items.length; i++) {
       const c = ctx.resolve(ctx.config, items[i], i);
+      if (c.mode === 'query' && c.saveAs) {
+        // Query lookup: keep the item, add the first matching document (or null).
+        const blank = c.where.some((w) => w.value === undefined || w.value === null || (typeof w.value === 'string' && !w.value.trim().replace(/^""$/, '')));
+        const docs = blank
+          ? []
+          : await fs.query(c.collection, {
+              where: c.where.map((w) => ({ ...w, value: coerce(w.value, w.op) })),
+              orderBy: c.orderBy ? { field: c.orderBy, direction: c.direction } : undefined,
+              limit: 1,
+            });
+        const d = docs[0];
+        out.push({ json: { ...items[i]!.json, [c.saveAs]: d ? { id: d.id, ...d.data } : null } });
+        continue;
+      }
       if (c.mode === 'get' && c.saveAs) {
         // Lookup mode: the item always continues, with the document (or null) added to it.
         const id = c.docId == null ? '' : String(c.docId).trim();
@@ -202,6 +215,15 @@ function coerce(value: unknown, op: string): unknown {
       /* fall through: comma list */
     }
     return t.split(',').map((s) => coerce(s, '=='));
+  }
+  // "60123456789" in double quotes stays text (phone numbers, IDs made of digits).
+  if (t.length >= 2 && t.startsWith('"') && t.endsWith('"')) {
+    try {
+      const parsed = JSON.parse(t);
+      if (typeof parsed === 'string') return parsed;
+    } catch {
+      return t.slice(1, -1);
+    }
   }
   if (t === 'true') return true;
   if (t === 'false') return false;

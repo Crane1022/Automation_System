@@ -1,6 +1,8 @@
 <!-- Widebed AI chat box. Paste this whole block into your website's HTML / custom code element. -->
 <!-- 1) Replace PASTE-THE-WEBHOOK-URL-HERE with the webhook URL you got when you published the workflow. -->
 <!-- 2) mode: "floating" = chat bubble in the bottom corner, "inline" = chat window inside this section. -->
+<!-- 3) askDetails: true = ask name, phone (with country code) and email on the first visit.          -->
+<!--    idleMinutes: show the "End chat" button after this many minutes without a message (0 = always). -->
 <div id="widebed-chat"></div>
 <script>
   window.WidebedChat = {
@@ -12,8 +14,13 @@
     placeholder: "Type your message...",
     color: "#1f3a5f",
     position: "right",
-    height: 520,
-    container: "widebed-chat"
+    height: 560,
+    container: "widebed-chat",
+    askDetails: true,
+    detailsTitle: "Hi! Before we start, please tell us who you are.",
+    country: "+60",
+    idleMinutes: 5,
+    endedText: "Chat ended. Thank you for chatting with Widebed!"
   };
 </script>
 <script>
@@ -41,7 +48,21 @@
     mode: opt('mode', 'mode') === 'inline' ? 'inline' : 'floating',
     container: opt('container', 'container'),
     height: /^\d{3,4}$/.test(opt('height', 'height')) ? Number(opt('height', 'height')) : 520,
+    // Ask for name, phone and email before the first message.
+    askDetails: /^(true|1|yes)$/i.test(opt('askDetails', 'ask-details')),
+    detailsTitle: opt('detailsTitle', 'details-title') || 'Before we start, please tell us who you are.',
+    country: /^\+\d{1,4}$/.test(opt('country', 'country')) ? opt('country', 'country') : '+60',
+    // Show "End chat" after this many minutes without a message (0 = always show it).
+    idleMinutes: /^\d{1,4}(\.\d+)?$/.test(opt('idleMinutes', 'idle-minutes')) ? Number(opt('idleMinutes', 'idle-minutes')) : 5,
+    endedText: opt('endedText', 'ended-text') || 'Chat ended. Thank you for chatting with us!',
   };
+  var COUNTRIES = [
+    ['+60', 'MY'], ['+65', 'SG'], ['+62', 'ID'], ['+66', 'TH'], ['+63', 'PH'], ['+84', 'VN'], ['+673', 'BN'], ['+86', 'CN'],
+    ['+852', 'HK'], ['+853', 'MO'], ['+886', 'TW'], ['+81', 'JP'], ['+82', 'KR'], ['+91', 'IN'], ['+92', 'PK'], ['+880', 'BD'],
+    ['+971', 'AE'], ['+966', 'SA'], ['+974', 'QA'], ['+61', 'AU'], ['+64', 'NZ'], ['+44', 'UK'], ['+353', 'IE'], ['+33', 'FR'],
+    ['+49', 'DE'], ['+31', 'NL'], ['+39', 'IT'], ['+34', 'ES'], ['+7', 'RU'], ['+1', 'US/CA'], ['+52', 'MX'], ['+55', 'BR'],
+  ];
+  if (!COUNTRIES.some(function (c) { return c[0] === cfg.country; })) COUNTRIES.unshift([cfg.country, '']);
   if (!/^https?:\/\/[^\s]+\/hooks\/[A-Za-z0-9_-]{10,}/.test(cfg.webhook)) {
     console.warn('[Widebed chat] Set the webhook URL (https://YOUR-APP/hooks/...) from publishing the workflow. Now: "' + cfg.webhook + '"');
     cfg.broken = true;
@@ -62,13 +83,22 @@
   var local = store('localStorage');
   var session = store('sessionStorage');
   var KEY = 'widebed-chat:' + cfg.webhook.slice(-12);
-  var sessionId = local.getItem(KEY + ':id');
-  if (!sessionId) {
-    sessionId = 'web-' + (window.crypto && crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(36) + Math.random().toString(36).slice(2));
-    local.setItem(KEY + ':id', sessionId);
+  function newSessionId() {
+    var id = 'web-' + (window.crypto && crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(36) + Math.random().toString(36).slice(2));
+    local.setItem(KEY + ':id', id);
+    return id;
   }
+  var sessionId = local.getItem(KEY + ':id') || newSessionId();
   var history = [];
-  try { history = JSON.parse(session.getItem(KEY + ':log') || '[]') || []; } catch (e) { history = []; }
+  try { history = JSON.parse(local.getItem(KEY + ':log') || session.getItem(KEY + ':log') || '[]') || []; } catch (e) { history = []; }
+  var profile = null;
+  try { profile = JSON.parse(local.getItem(KEY + ':profile') || 'null'); } catch (e) { profile = null; }
+  var lastActive = Number(local.getItem(KEY + ':at')) || 0;
+  function touch() {
+    lastActive = Date.now();
+    local.setItem(KEY + ':at', String(lastActive));
+    if (cfg.idleMinutes > 0) endBtn.classList.remove('on');
+  }
 
   /* ---------- UI ---------- */
   var inline = cfg.mode === 'inline';
@@ -104,12 +134,31 @@
     '.form{display:flex;gap:8px;padding:10px;border-top:1px solid #e3e6ea;background:#fff}' +
     'textarea{flex:1;resize:none;border:1px solid #d5d9de;border-radius:10px;padding:9px 10px;font-size:14px;max-height:110px;outline:none}textarea:focus{border-color:' + cfg.color + '}' +
     '.send{border:0;border-radius:10px;padding:0 14px;background:' + cfg.color + ';color:#fff;font-weight:600;cursor:pointer}.send:disabled{opacity:.5;cursor:default}' +
+    '.end{display:none;margin-left:6px;background:rgba(255,255,255,.18);border:1px solid rgba(255,255,255,.45);color:#fff;border-radius:8px;padding:5px 9px;font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap}.end.on{display:inline-block}.end:hover{background:rgba(255,255,255,.3)}' +
+    '.idle{align-self:center;font-size:12px;color:#5b6470;text-align:center;padding:2px 8px}.idle button{border:0;background:none;color:' + cfg.color + ';font-weight:600;cursor:pointer;text-decoration:underline;font-size:12px}' +
+    '.details{flex:1;overflow-y:auto;padding:18px 16px;display:none;flex-direction:column;gap:12px;background:#f6f7f9}.details.on{display:flex}' +
+    '.details p{margin:0;font-size:14px;line-height:1.45;color:#1b1f24}.details label{display:block;font-size:12px;font-weight:600;color:#3d4550;margin-bottom:4px}' +
+    '.details input,.details select{width:100%;border:1px solid #d5d9de;border-radius:10px;padding:9px 10px;font-size:14px;background:#fff;color:#1b1f24;outline:none}.details input:focus,.details select:focus{border-color:' + cfg.color + '}' +
+    '.details .row{display:flex;gap:6px}.details .row select{width:108px;flex:none}.details .bad{border-color:#d93025}.details .msg{color:#a3271f;font-size:12px;min-height:15px}' +
+    '.details .go{border:0;border-radius:10px;padding:11px;background:' + cfg.color + ';color:#fff;font-weight:600;font-size:14px;cursor:pointer}.details .go:disabled{opacity:.6;cursor:default}' +
+    '.details .note{font-size:11px;color:#6b7480}' +
     (inline
       ? '.panel{position:static;display:flex;width:100%;max-width:none;height:' + cfg.height + 'px;max-height:none;box-shadow:0 4px 18px rgba(0,0,0,.12);border:1px solid #e3e6ea}.btn,.x{display:none}'
       : '@media (max-width:480px){.panel{position:fixed;inset:0;width:100%;height:100%;max-height:none;max-width:none;border-radius:0}}') +
     '</style>' +
     '<div class="panel" role="dialog" aria-label="' + esc(cfg.title) + '">' +
-    '<div class="head"><div><b>' + esc(cfg.title) + '</b><span>' + esc(cfg.subtitle) + '</span></div><button class="x" aria-label="Close chat">\u00d7</button></div>' +
+    '<div class="head"><div><b>' + esc(cfg.title) + '</b><span>' + esc(cfg.subtitle) + '</span></div><span style="margin-left:auto"></span><button class="end" type="button" title="End this chat and start again">End chat</button><button class="x" style="margin-left:8px" aria-label="Close chat">\u00d7</button></div>' +
+    '<div class="details" aria-label="Your details">' +
+    '<p>' + esc(cfg.detailsTitle) + '</p>' +
+    '<div><label for="wb-name">Name *</label><input id="wb-name" class="f-name" autocomplete="name" maxlength="80"></div>' +
+    '<div><label for="wb-phone">Phone number *</label><div class="row"><select class="f-cc" aria-label="Country code">' +
+    COUNTRIES.map(function (c) { return '<option value="' + c[0] + '"' + (c[0] === cfg.country ? ' selected' : '') + '>' + (c[1] ? c[1] + ' ' : '') + c[0] + '</option>'; }).join('') +
+    '</select><input id="wb-phone" class="f-phone" type="tel" inputmode="tel" autocomplete="tel-national" maxlength="20" placeholder="12 345 6789"></div></div>' +
+    '<div><label for="wb-email">Email address *</label><input id="wb-email" class="f-email" type="email" autocomplete="email" maxlength="120" placeholder="you@example.com"></div>' +
+    '<div class="msg" role="alert"></div>' +
+    '<button class="go" type="button">Start chat</button>' +
+    '<div class="note">We use these details only to help you with your stay.</div>' +
+    '</div>' +
     '<div class="log" aria-live="polite"></div>' +
     '<div class="form"><textarea rows="1" maxlength="2000" aria-label="Your message" placeholder="' + esc(cfg.placeholder) + '"></textarea><button class="send" type="button">Send</button></div>' +
     '</div>' +
@@ -121,6 +170,9 @@
 
   var panel = root.querySelector('.panel');
   var log = root.querySelector('.log');
+  var details = root.querySelector('.details');
+  var chatForm = root.querySelector('.form');
+  var endBtn = root.querySelector('.end');
 
   var input = root.querySelector('textarea');
   var send = root.querySelector('.send');
@@ -137,16 +189,121 @@
     if (save) {
       history.push({ k: kind, t: text });
       history = history.slice(-40);
-      session.setItem(KEY + ':log', JSON.stringify(history));
+      local.setItem(KEY + ':log', JSON.stringify(history));
     }
   }
   log.appendChild(dots);
-  add('bot', cfg.welcome, false);
-  history.forEach(function (h) { add(h.k, h.t, false); });
+
+  /* ---------- first visit: ask for the visitor's details ---------- */
+  var needDetails = cfg.askDetails && !(profile && profile.name && profile.phone && profile.email);
+  function showChat() {
+    details.classList.remove('on');
+    log.style.display = '';
+    chatForm.style.display = '';
+  }
+  function showDetails() {
+    details.classList.add('on');
+    log.style.display = 'none';
+    chatForm.style.display = 'none';
+    endBtn.classList.remove('on');
+  }
+  function startView() {
+    while (log.firstChild !== dots) log.removeChild(log.firstChild);
+    if (needDetails) return showDetails();
+    showChat();
+    if (!history.length) add('bot', cfg.askDetails && profile ? 'Hi ' + profile.name + '! How can we help you today?' : cfg.welcome, false);
+    history.forEach(function (h) { add(h.k, h.t, false); });
+  }
+  startView();
+
+  var fName = root.querySelector('.f-name');
+  var fCc = root.querySelector('.f-cc');
+  var fPhone = root.querySelector('.f-phone');
+  var fEmail = root.querySelector('.f-email');
+  var fMsg = root.querySelector('.details .msg');
+  var go = root.querySelector('.go');
+  function check() {
+    var bad = [];
+    var name = fName.value.trim().replace(/\s+/g, ' ');
+    var digits = fPhone.value.replace(/[^0-9]/g, '').replace(/^0+/, '');
+    var email = fEmail.value.trim();
+    fName.classList.toggle('bad', name.length < 2);
+    fPhone.classList.toggle('bad', digits.length < 6 || digits.length > 14);
+    fEmail.classList.toggle('bad', !/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email));
+    if (name.length < 2) bad.push('your name');
+    if (digits.length < 6 || digits.length > 14) bad.push('a valid phone number');
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email)) bad.push('a valid email address');
+    fMsg.textContent = bad.length ? 'Please enter ' + bad.join(', ') + '.' : '';
+    // phoneKey: digits only with the country code (60123456789), the same as the PMS saves for each tenant.
+    return bad.length ? null : { name: name, countryCode: fCc.value, phoneNumber: digits, phone: fCc.value + digits, phoneKey: fCc.value.replace(/[^0-9]/g, '') + digits, email: email };
+  }
+  [fName, fPhone, fEmail].forEach(function (el) {
+    el.addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); startChat(); } });
+  });
+  go.addEventListener('click', startChat);
+  function startChat() {
+    var p = check();
+    if (!p || busy) return;
+    if (cfg.broken) { fMsg.textContent = 'This chat box is not set up yet: the webhook URL is missing.'; return; }
+    profile = p;
+    local.setItem(KEY + ':profile', JSON.stringify(p));
+    needDetails = false;
+    showChat();
+    touch();
+    call({ action: 'start' }, 'Hi ' + p.name + '! How can we help you today?');
+  }
 
   function toggle(open) {
     panel.classList.toggle('open', open);
-    if (open) setTimeout(function () { input.focus(); }, 50);
+    if (open) setTimeout(function () { (needDetails ? fName : input).focus(); }, 50);
+    if (open) checkIdle();
+  }
+
+  /* ---------- End chat: after a long quiet time (or always, with idle-minutes 0) ---------- */
+  function checkIdle() {
+    if (needDetails) return;
+    var quiet = cfg.idleMinutes <= 0 || (history.length > 0 && lastActive && Date.now() - lastActive > cfg.idleMinutes * 60000);
+    if (quiet && !endBtn.classList.contains('on')) {
+      endBtn.classList.add('on');
+      var tip = document.createElement('div');
+      tip.className = 'idle';
+      if (cfg.idleMinutes > 0) {
+        tip.innerHTML = 'Are you still there? <button type="button">End chat</button>';
+        tip.querySelector('button').addEventListener('click', endChat);
+        log.insertBefore(tip, dots);
+        log.scrollTop = log.scrollHeight;
+      }
+    }
+  }
+  setInterval(checkIdle, 20000);
+  endBtn.addEventListener('click', endChat);
+  function endChat() {
+    if (busy) return;
+    var old = sessionId;
+    // Tell the workflow to forget this conversation (best effort: the box starts fresh either way).
+    if (!cfg.broken) post(JSON.stringify(payloadFor({ action: 'end' }, old)), null).catch(function () {});
+    sessionId = newSessionId();
+    history = [];
+    profile = null;
+    local.removeItem(KEY + ':log');
+    local.removeItem(KEY + ':profile');
+    local.removeItem(KEY + ':at');
+    session.removeItem(KEY + ':log');
+    lastActive = 0;
+    needDetails = cfg.askDetails;
+    endBtn.classList.remove('on');
+    [fName, fPhone, fEmail].forEach(function (el) { el.value = ''; el.classList.remove('bad'); });
+    fMsg.textContent = '';
+    startView();
+    if (!needDetails) {
+      var done = document.createElement('div');
+      done.className = 'idle';
+      done.textContent = cfg.endedText;
+      log.insertBefore(done, log.firstChild);
+    } else {
+      fMsg.textContent = '';
+      details.querySelector('p').textContent = cfg.endedText + ' ' + cfg.detailsTitle;
+    }
   }
   root.querySelector('.btn').addEventListener('click', function () { toggle(!panel.classList.contains('open')); });
   root.querySelector('.x').addEventListener('click', function () { toggle(false); });
@@ -159,6 +316,28 @@
   send.addEventListener('click', submit);
 
   var busy = false;
+  function payloadFor(extra, id) {
+    var p = { sessionId: id || sessionId, page: location.href, title: document.title };
+    if (profile) p.profile = profile;
+    for (var k in extra) p[k] = extra[k];
+    return p;
+  }
+  function post(body, signal) {
+    function send1(url) {
+      return fetch(url, {
+        method: 'POST',
+        // text/plain is a "simple" request: no CORS preflight, so it works on any website builder.
+        headers: { 'content-type': 'text/plain;charset=UTF-8' },
+        body: body,
+        keepalive: !signal,
+        signal: signal || undefined,
+      });
+    }
+    // Older URLs use /hooks/...; if the hosting does not pass that to the app, try /api/hooks/... once.
+    var alt = cfg.webhook.indexOf('/api/hooks/') < 0 ? cfg.webhook.replace('/hooks/', '/api/hooks/') : null;
+    return send1(cfg.webhook).then(function (res) { return alt && res.status === 405 ? send1(alt) : res; }, function (err) { if (alt) return send1(alt); throw err; });
+  }
+
   // No <form>: page builders often run custom code in a sandboxed frame where forms are blocked.
   function submit() {
     var text = input.value.trim();
@@ -167,29 +346,22 @@
       add('err', 'This chat box is not set up yet: the webhook URL is missing.', false);
       return;
     }
-    busy = true;
-    send.disabled = true;
     input.value = '';
     add('me', text, true);
+    touch();
+    call({ action: 'message', message: text }, null);
+  }
+
+  /** Sends one request and shows the reply. `fallback` is shown if the workflow answers without a reply. */
+  function call(extra, fallback) {
+    busy = true;
+    send.disabled = true;
+    go.disabled = true;
     dots.classList.add('on');
     log.scrollTop = log.scrollHeight;
-
     var ctrl = window.AbortController ? new AbortController() : null;
     var timer = setTimeout(function () { if (ctrl) ctrl.abort(); }, 60000);
-    var payload = JSON.stringify({ message: text, sessionId: sessionId, page: location.href, title: document.title });
-    function post(url) {
-      return fetch(url, {
-        method: 'POST',
-        // text/plain is a "simple" request: no CORS preflight, so it works on any website builder.
-        headers: { 'content-type': 'text/plain;charset=UTF-8' },
-        body: payload,
-        signal: ctrl ? ctrl.signal : undefined,
-      });
-    }
-    // Older URLs use /hooks/...; if the hosting does not pass that to the app, try /api/hooks/... once.
-    var alt = cfg.webhook.indexOf('/api/hooks/') < 0 ? cfg.webhook.replace('/hooks/', '/api/hooks/') : null;
-    post(cfg.webhook)
-      .then(function (res) { return alt && res.status === 405 ? post(alt) : res; }, function (err) { if (alt) return post(alt); throw err; })
+    post(JSON.stringify(payloadFor(extra)), ctrl ? ctrl.signal : null)
       .then(function (res) {
         var type = res.headers.get('content-type') || '';
         return (type.indexOf('json') >= 0 ? res.json() : res.text()).then(function (data) { return { ok: res.ok, status: res.status, data: data }; });
@@ -198,17 +370,21 @@
         var d = r.data;
         var reply = typeof d === 'string' ? d : d && (d.reply || d.output || d.message || d.text);
         if (r.ok && r.status !== 202 && reply) add('bot', String(reply), true);
+        else if (fallback) add('bot', fallback, true); // the greeting still works if the look-up failed
         else if (r.status >= 400 && d && typeof d === 'object' && d.error) add('err', String(d.error), false);
         else add('err', r.status === 202 ? 'Sorry, that took too long. Please try again in a moment.' : 'Sorry, something went wrong. Please try again.', false);
       })
       .catch(function () {
-        add('err', 'Sorry, we could not reach the chat. Check your connection and try again.', false);
+        if (fallback) add('bot', fallback, true);
+        else add('err', 'Sorry, we could not reach the chat. Check your connection and try again.', false);
       })
       .then(function () {
         clearTimeout(timer);
         dots.classList.remove('on');
         busy = false;
         send.disabled = false;
+        go.disabled = false;
+        touch();
         input.focus();
       });
   }

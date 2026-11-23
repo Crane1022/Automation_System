@@ -516,10 +516,22 @@ export class CredentialService {
         return snap.exists ? toDoc(snap) : null;
       }),
       query: (collection, opts) => wrap(async () => {
+        const limit = Math.min(500, Math.max(1, opts.limit));
+        const group = groupPattern(collection);
+        if (group) {
+          // tenants/*/private: the "private" sub-collection of every tenant (a collection group query). Firestore searches
+          // every "private" collection in the project, so only documents whose path fits the pattern are returned.
+          const pattern = checkCollection(collection);
+          let q: FirebaseFirestore.Query = db.collectionGroup(group.id);
+          for (const w of opts.where) q = q.where(w.field, w.op, w.value);
+          if (opts.orderBy) q = q.orderBy(opts.orderBy.field, opts.orderBy.direction);
+          const snap = await q.limit(Math.min(500, limit * 10)).get();
+          return snap.docs.filter((d) => collectionAllowed(d.ref.parent.path, [pattern])).slice(0, limit).map(toDoc);
+        }
         let q: FirebaseFirestore.Query = db.collection(checkCollection(collection));
         for (const w of opts.where) q = q.where(w.field, w.op, w.value);
         if (opts.orderBy) q = q.orderBy(opts.orderBy.field, opts.orderBy.direction);
-        const snap = await q.limit(Math.min(500, Math.max(1, opts.limit))).get();
+        const snap = await q.limit(limit).get();
         return snap.docs.map(toDoc);
       }),
       create: (collection, data, docId) => wrap(async () => {
@@ -590,6 +602,17 @@ export class CredentialService {
     const allowed = normaliseCollections(allowedCollections, c.details.projectId === this.o.ownProjectId);
     await this.o.repos.credentials.update(id, { details: { ...c.details, allowedCollections: allowed, readOnly }, updatedAt: nowIso() });
   }
+}
+
+// "tenants/*/private": search the "private" sub-collection of every tenant. Null for a normal collection path.
+export function groupPattern(path: string): { id: string } | null {
+  const segs = path.split('/').filter(Boolean);
+  if (!segs.includes('*')) return null;
+  const last = segs[segs.length - 1]!;
+  if (segs.length % 2 !== 1 || segs[0] === '*' || last === '*' || segs.some((s, i) => s === '*' && i % 2 === 0)) {
+    throw new NodeError(`“${path}”: use * only in place of a document ID, e.g. tenants/*/private`, { code: 'BAD_PATH' });
+  }
+  return { id: last };
 }
 
 function normaliseCollections(list: string[], ownProject: boolean): string[] {

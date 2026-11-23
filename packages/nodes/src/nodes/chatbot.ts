@@ -282,3 +282,54 @@ export const aiChatbot = defineNode({
     return { outputs: { main: out } };
   },
 });
+
+/* --------------------------------------------------------- Forget chat */
+
+/** "End chat": forgets one conversation of this workflow's AI Chatbot, so the next message starts fresh. */
+export const aiChatForget = defineNode({
+  descriptor: {
+    type: 'ai.chatForget',
+    version: 1,
+    displayName: 'AI Chatbot: End Chat',
+    description: 'Forgets a conversation of the AI Chatbot (e.g. when the visitor clicks End chat), so it starts fresh.',
+    category: 'ai',
+    icon: 'message-square-x',
+    isTrigger: false,
+    inputs: [{ id: 'main' }],
+    outputs: [{ id: 'main' }],
+    fields: [
+      {
+        key: 'conversationId',
+        label: 'Conversation to forget',
+        type: 'string',
+        required: true,
+        expressions: true,
+        default: '{{ $json.body.sessionId }}',
+        help: 'The same value as “Remember the conversation per” on the AI Chatbot step of this workflow.',
+      },
+    ],
+    inputSchema: { description: 'Any items.' },
+    outputSchema: { description: 'The same item, with forgotten: true.', example: [{ json: { forgotten: true } }] },
+    retryable: true,
+    available: true,
+    docs: [
+      '### AI Chatbot: End Chat',
+      'Deletes the saved messages of one conversation. The AI Chatbot in this workflow then treats the next message as a new visitor.',
+      '',
+      'Website chat box: the *End chat* button sends `action: "end"` with the `sessionId`. Use a Switch on `{{ $json.body.action }}` and connect the **end** output here, then a *Respond to Webhook*.',
+    ].join('\n'),
+  },
+  configSchema: z.object({ conversationId: z.string().default('') }),
+  async execute(ctx) {
+    const memory = ctx.services.chatMemory;
+    const out: Item[] = [];
+    for (let i = 0; i < ctx.items.length; i++) {
+      const c = ctx.resolve(ctx.config, ctx.items[i]!, i) as { conversationId: unknown };
+      const convo = asText(c.conversationId).trim().slice(0, 200);
+      if (convo && memory) await memory.clear(convo);
+      else if (!memory) ctx.log('Conversation memory is not available here; nothing to forget');
+      out.push({ json: { ...ctx.items[i]!.json, forgotten: !!(convo && memory) } });
+    }
+    return { outputs: { main: out } };
+  },
+});

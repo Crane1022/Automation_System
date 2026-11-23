@@ -12,6 +12,7 @@ import type { TokenVerifier } from '../src/auth/verifier.js';
 import { convertN8n, convertValue } from '../src/services/workflow-transfer.js';
 import { chatMemoryFor } from '../src/services/execution-service.js';
 import willow from './fixtures/willow-n8n.json';
+import { BUILT_IN_TEMPLATES } from '@widebed/shared';
 
 /**
  * The "Willow 4.0" n8n chatbot (GoHighLevel live chat → Gemini agent with memory and
@@ -502,5 +503,99 @@ describe('Website chat box: webhook that sends back the reply', () => {
     expect(r.report.unsupported).toEqual([]);
     expect(r.definition.nodes[0]!.config).toMatchObject({ responseMode: 'reply' });
     expect(r.definition.nodes[1]).toMatchObject({ type: 'comm.respondWebhook', config: { bodyType: 'fields', bodyFields: [{ key: 'reply', value: '{{ $json.output }}' }, { key: 'ok', value: true }] } });
+  });
+});
+
+/* ------------------------------------------- website chat that knows the guest */
+
+describe('Website chat that knows the guest (template)', () => {
+  const tpl = BUILT_IN_TEMPLATES.find((t) => t.templateId === 'tpl_ai_website_guest_chat')!;
+  const SHEET = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/edit`;
+  function definition(): WorkflowDefinition {
+    const def = structuredClone(tpl.definition);
+    for (const n of def.nodes) {
+      if (n.type === 'data.firebaseRead') n.credentialId = 'cred_pms';
+      if (n.type === 'ai.classify') n.credentialId = 'cred_gemini';
+      if (n.type === 'comm.sheetsRead') { n.credentialId = 'cred_google'; n.config.spreadsheet = SHEET; }
+      if (n.type === 'ai.chatbot') {
+        n.credentialId = 'cred_gemini';
+        n.config.googleConnection = 'cred_google';
+        for (const l of n.config.lookups as any[]) l.spreadsheet = SHEET;
+      }
+    }
+    return def;
+  }
+  const web = fakeWeb();
+  const repos = createMemoryRepositories();
+  const guests = [{ id: 'main', data: { kind: 'tenant', name: 'Ana Lee', phone: '012-345 6789', phoneKey: '60123456789', email: 'ana@example.com' } }];
+  const queries: any[] = [];
+  const fs = {
+    query: async (collection: string, o: any) => {
+      queries.push({ collection, ...o });
+      return guests.filter((g: any) => o.where.every((w: any) => g.data[w.field] === w.value)).slice(0, o.limit).map((g) => ({ ...g, path: `tenants/TEN-0001/private/${g.id}` }));
+    },
+    get: async () => null,
+  };
+  async function run(body: Record<string, unknown>, ai: ReturnType<typeof fakeAi>) {
+    const replies: any[] = [];
+    const svc: NodeServices = {
+      http: web.http as any,
+      googleToken: async () => ({ accessToken: 'g-token', email: 'support@widebed.com', scopes: [] }),
+      ai: ai.ai,
+      firestore: async (id: string) => (expect(id).toBe('cred_pms'), fs),
+      chatMemory: chatMemoryFor(repos, 'wf_guest_chat'),
+      respond: async (r) => void replies.push(r.body),
+    } as any;
+    const r = await runWorkflow({ executionId: crypto.randomUUID(), workflowId: 'wf_guest_chat', definition: definition(), registry, services: svc, triggerItems: [{ json: { body, headers: {}, query: {}, method: 'POST' } }] });
+    return { r, replies };
+  }
+  const profile = (phone: string, email: string) => ({ name: 'Ana Lee', phone, phoneKey: phone.replace(/\D/g, ''), countryCode: '+60', phoneNumber: phone.slice(3), email });
+
+  it('is valid once the connections are chosen', () => {
+    expect(validateWorkflow(definition(), registry)).toEqual([]);
+  });
+
+  it('welcomes back a guest found by phone or email, and greets a new one', async () => {
+    let { r, replies } = await run({ action: 'start', sessionId: 's1', profile: profile('+60123456789', 'x@y.com') }, fakeAi([]));
+    expect(r.status).toBe('success');
+    expect(replies).toEqual([{ reply: expect.stringMatching(/^Welcome back, Ana Lee!/) }]);
+    ({ replies } = await run({ action: 'start', sessionId: 's2', profile: profile('+60111111111', 'ana@example.com') }, fakeAi([])));
+    expect(replies[0].reply).toMatch(/^Welcome back/);
+    ({ replies } = await run({ action: 'start', sessionId: 's3', profile: profile('+60111111111', 'new@example.com') }, fakeAi([])));
+    expect(replies[0].reply).toMatch(/^Hi Ana Lee, nice to meet you! What are you looking for/);
+    // Found by phone → the email search is skipped (blank filter); not found → email is searched.
+    expect(queries.map((q) => [q.collection, q.where.map((w: any) => w.field).join('+')])).toEqual([
+      ['tenants/*/private', 'kind+phoneKey'], ['tenants/*/private', 'kind+phoneKey'], ['tenants/*/private', 'kind+email'], ['tenants/*/private', 'kind+phoneKey'], ['tenants/*/private', 'kind+email'],
+    ]);
+  });
+
+  it('sorts the question and searches the matching tab first, with memory per visitor', async () => {
+    const ai = fakeAi(['{"category":"Property Units","reason":"parking"}', '{"lookup":"Best list for this question","find":"A-12-3"}', '{"reply":"Parking is on level 3, bay 12."}']);
+    const { r, replies } = await run({ action: 'message', message: 'Where do I park at A-12-3?', sessionId: 's1', profile: profile('+60123456789', 'ana@example.com') }, ai);
+    expect(r.status).toBe('success');
+    expect(replies).toEqual([{ reply: 'Parking is on level 3, bay 12.' }]);
+    expect(ai.calls[1]!.system).toContain('Guest name: Ana Lee');
+    expect(ai.calls[1]!.system).toContain('Type of question: Property Units');
+    expect(ai.calls[2]!.prompt).toContain('Level 3, bay 12');
+    expect(web.sheetReads).toContain('Property Units');
+    expect((await chatMemoryFor(repos, 'wf_guest_chat').load('s1')).length).toBe(2);
+  });
+
+  it('End chat forgets the conversation', async () => {
+    const { r, replies } = await run({ action: 'end', sessionId: 's1' }, fakeAi([]));
+    expect(r.status).toBe('success');
+    expect(replies[0].reply).toMatch(/^Chat ended/);
+    expect(await chatMemoryFor(repos, 'wf_guest_chat').load('s1')).toEqual([]);
+  });
+});
+
+describe('Firebase: search a sub-collection of every document (tenants/*/private)', () => {
+  it('recognises the pattern and refuses * in the wrong place', async () => {
+    const { groupPattern } = await import('../src/services/credential-service.js');
+    expect(groupPattern('tenants')).toBeNull();
+    expect(groupPattern('tenants/TEN-1/private')).toBeNull();
+    expect(groupPattern('tenants/*/private')).toEqual({ id: 'private' });
+    expect(() => groupPattern('*/x/private')).toThrow(/only in place of a document ID/);
+    expect(() => groupPattern('tenants/*')).toThrow();
   });
 });

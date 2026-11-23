@@ -11,7 +11,7 @@ import { firebaseCreate, firebaseDelete, firebaseRead, firebaseUpdate } from './
 import { gmailRead, gmailSend } from './nodes/gmail.js';
 import { sheetsCreateRow, sheetsRead, sheetsUpdateRow } from './nodes/sheets.js';
 import { aiAgent, aiChat, aiClassify, aiExtract } from './nodes/ai.js';
-import { aiChatbot } from './nodes/chatbot.js';
+import { aiChatbot, aiChatForget } from './nodes/chatbot.js';
 import { unsupportedNode } from './nodes/unsupported.js';
 import { customStepNode } from './nodes/custom-step.js';
 
@@ -69,7 +69,7 @@ export function createDefaultRegistry(): NodeRegistry {
     // communication
     gmailSend, gmailRead,
     sheetsRead, sheetsCreateRow, sheetsUpdateRow,
-    aiChat, aiChatbot, aiClassify, aiExtract, aiAgent,
+    aiChat, aiChatbot, aiChatForget, aiClassify, aiExtract, aiAgent,
     // imports
     unsupportedNode,
   ];
