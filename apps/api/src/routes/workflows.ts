@@ -1,3 +1,4 @@
+import { z } from 'zod';
 import { Router, type Request } from 'express';
 import type { AppUser, Item, Workflow, WorkflowDefinition, WorkflowVersion } from '@widebed/shared';
 import {
@@ -9,10 +10,13 @@ import {
   canViewWorkflow,
   emptyDefinition,
   hasPermission,
+  CUSTOM_STEP_TYPE,
 } from '@widebed/shared';
-import { validateWorkflow } from '@widebed/engine';
+import { canUseStep } from './custom-steps.js';
+import { resolveValue, validateWorkflow } from '@widebed/engine';
 import type { AppContext } from '../context.js';
 import { ah } from '../middleware/errors.js';
+import { canWriteCode } from './misc.js';
 import { badRequest, forbidden, notFound, unprocessable } from '../lib/http-error.js';
 import { newId, nowIso } from '../lib/ids.js';
 import { createWorkflowSchema, definitionSchema, runSchema, updateWorkflowSchema } from './schemas.js';
@@ -77,12 +81,25 @@ export function workflowsRouter(ctx: AppContext) {
    *  - Connections (credentials) must be ones this user is allowed to see.
    */
   async function checkDefinitionRights(user: AppUser, next: WorkflowDefinition, previous: WorkflowDefinition | null) {
-    if (!hasPermission(user, 'node.createCustom')) {
+    if (!(await canWriteCode(ctx, user))) {
       const before = new Map((previous?.nodes ?? []).filter((n) => n.type === 'data.code').map((n) => [n.id, JSON.stringify(n.config)]));
       const changed = next.nodes.some((n) => n.type === 'data.code' && before.get(n.id) !== JSON.stringify(n.config));
-      if (changed) throw forbidden('Only IT Admins can add or change Code nodes');
+      if (changed) throw forbidden('Only IT Admins can add or change Code steps (an Admin can allow everyone who builds workflows in Settings → Code steps)');
     }
+    // Team steps: the saved step must be shared with this user; boxes that pick a connection are checked too.
     const ids = [...new Set(next.nodes.flatMap((n) => credentialRefs(n, ctx.registry.get(n.type)?.descriptor)))];
+    const before = new Map((previous?.nodes ?? []).map((n) => [n.id, JSON.stringify(n.config)]));
+    for (const n of next.nodes) {
+      if (n.type !== CUSTOM_STEP_TYPE || before.get(n.id) === JSON.stringify(n.config)) continue;
+      const stepId = String((n.config as any)?.stepId ?? '');
+      const step = stepId ? await repos.customSteps.get(stepId) : null;
+      if (!step || !canUseStep(user, step)) throw forbidden(`“${n.name}” uses a saved team step that is not shared with you`);
+      const base = ctx.registry.get(step.baseType)?.descriptor;
+      const values = ((n.config as any)?.values ?? {}) as Record<string, unknown>;
+      for (const f of base?.fields ?? []) {
+        if (f.type === 'credential' && step.fields.some((x) => x.key === f.key) && typeof values[f.key] === 'string' && values[f.key]) ids.push(values[f.key] as string);
+      }
+    }
     for (const id of ids) {
       const c = await repos.credentials.get(id);
       if (!c || !ctx.credentials.visibleTo(user, c)) throw forbidden('A node uses a connection you do not have access to');
@@ -151,6 +168,30 @@ export function workflowsRouter(ctx: AppContext) {
     await repos.workflows.create(wf);
     await ctx.audit({ actorId: user.uid, action: 'workflow.create', resourceType: 'workflow', resourceId: wf.workflowId, metadata: { name: wf.name } });
     res.status(201).json(wf);
+  }));
+
+  /**
+   * POST /api/workflows/convert-n8n-node { node }  — for “Paste from n8n” on a step's JSON tab.
+   * Accepts one n8n node (or n8n's copied { nodes: [...] }) and returns our step type + settings.
+   */
+  r.post('/convert-n8n-node', ah(async (req, res) => {
+    if (!hasPermission(req.user!, 'workflow.create')) throw forbidden();
+    const raw = req.body?.node;
+    const list = Array.isArray(raw?.nodes) ? raw.nodes : Array.isArray(raw) ? raw : [raw];
+    if (!list.length || !list.every((x: any) => x && typeof x.type === 'string' && typeof x.name === 'string')) {
+      throw badRequest('Paste an n8n node: in n8n select the node, press Ctrl+C, and paste here');
+    }
+    let result;
+    try {
+      result = convertN8n({ name: 'paste', nodes: list.slice(0, 50), connections: raw?.connections ?? {} });
+    } catch (err) {
+      throw badRequest(`Could not read the n8n node: ${(err as Error).message}`);
+    }
+    const node = result.definition.nodes.find((x) => x.type !== 'util.unsupported') ?? result.definition.nodes[0];
+    if (!node || node.type === 'util.unsupported') {
+      throw badRequest(`This n8n node has no equivalent yet${result.report.unsupported[0] ? `: ${result.report.unsupported[0].reason}` : ''}`);
+    }
+    res.json({ type: node.type, name: node.name, config: node.config, warnings: result.report.warnings });
   }));
 
   /**
@@ -417,6 +458,55 @@ export function workflowsRouter(ctx: AppContext) {
       untilNodeId: req.params.nodeId,
     });
     res.status(202).json(result);
+  }));
+
+  /**
+   * POST /api/workflows/:id/preview-expression { nodeId, value }
+   * Works out a field's {{ formulas }} with the data of this workflow's latest run, so the editor
+   * can show “Preview from the last run”. Read-only: nothing runs, nothing is saved.
+   */
+  r.post('/:id/preview-expression', ah(async (req, res) => {
+    const wf = await load(req, 'edit');
+    const body = z.object({ nodeId: z.string().max(200), value: z.string().max(20_000) }).parse(req.body ?? {});
+    const runs = (await repos.executions.list({ workflowId: wf.workflowId }, 10)).items;
+    let chosen: { id: string; steps: Awaited<ReturnType<typeof repos.executions.listSteps>> } | null = null;
+    for (const run of runs) {
+      const steps = await repos.executions.listSteps(run.executionId);
+      if (!chosen) chosen = { id: run.executionId, steps };
+      if (steps.some((st) => st.nodeId === body.nodeId)) {
+        chosen = { id: run.executionId, steps };
+        break;
+      }
+    }
+    const listOf = (out: unknown): Record<string, unknown>[] => {
+      const main = out && typeof out === 'object' && !Array.isArray(out) ? (out as Record<string, unknown>).main ?? Object.values(out as object).find(Array.isArray) : out;
+      return Array.isArray(main) ? (main.filter((x) => x && typeof x === 'object') as Record<string, unknown>[]) : [];
+    };
+    const nodes: Record<string, Record<string, unknown> | undefined> = {};
+    const all: Record<string, Record<string, unknown>[]> = {};
+    for (const st of chosen?.steps ?? []) {
+      if (st.status !== 'success') continue;
+      const items = listOf(st.outputData);
+      nodes[st.nodeId] = nodes[st.nodeName] = items[0];
+      all[st.nodeId] = all[st.nodeName] = items;
+    }
+    const target = chosen?.steps.find((st) => st.nodeId === body.nodeId);
+    const input = Array.isArray(target?.inputData) ? (target!.inputData as Record<string, unknown>[])[0] : undefined;
+    const trigger = chosen?.steps[0] ? listOf(chosen.steps[0].outputData)[0] : undefined;
+    try {
+      const value = resolveValue(body.value, {
+        item: { json: (input ?? trigger ?? {}) as Record<string, unknown> },
+        itemIndex: 0,
+        nodes,
+        allItems: (n) => all[n],
+        trigger,
+        executionId: chosen?.id ?? 'preview',
+        workflowId: wf.workflowId,
+      });
+      res.json({ ok: true, value, executionId: chosen?.id ?? null, fromRun: !!chosen });
+    } catch (err) {
+      res.json({ ok: false, error: (err as Error).message, executionId: chosen?.id ?? null, fromRun: !!chosen });
+    }
   }));
 
   r.get('/:id/webhooks', ah(async (req, res) => {

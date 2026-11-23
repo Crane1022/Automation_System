@@ -91,6 +91,23 @@ async function testAlert() {
   }
 }
 
+/* ---------------- Code steps: who may write code ---------------- */
+const savingCode = ref(false);
+async function saveCodeAccess(who: 'it_admin' | 'editors') {
+  if (!sys.value) return;
+  if (who === 'editors' && !confirm('Let everyone who builds workflows add and change Code steps?\n\nCode runs in a locked sandbox (no internet, no files, time and memory limits), but it can still do anything with the data a workflow has. Turn this on only if you trust your workflow builders.')) return;
+  savingCode.value = true;
+  try {
+    sys.value = await api<SystemSettings>('/system/settings', { method: 'PUT', body: { ...sys.value, code: { whoCanWrite: who } } });
+    toast(who === 'editors' ? 'Workflow builders can now write Code steps.' : 'Only IT Admins can write Code steps.', 'success');
+    auth.loadProfile();
+  } catch (err) {
+    toastError(err);
+  } finally {
+    savingCode.value = false;
+  }
+}
+
 /* ---------------- Backup & restore ---------------- */
 const restoring = ref<{ done: number; total: number; failed: string[] } | null>(null);
 async function downloadBackup() {
@@ -228,6 +245,15 @@ async function restore(e: Event) {
             <button type="submit" class="btn-primary" :disabled="saving">Save</button>
           </div>
         </form>
+      </section>
+
+      <section v-if="sys" class="card p-5 animate-in">
+        <h2 class="section-title">Code steps</h2>
+        <p class="text-[13px] text-muted mt-1 mb-3">Who may add and change <b>Code</b> steps (JavaScript). Code runs in a locked sandbox: no internet, no files, a time limit and a memory limit.</p>
+        <div class="flex flex-col gap-2 text-[13.5px]">
+          <label class="flex items-start gap-2"><input type="radio" name="code-access" class="mt-1 accent-[var(--wb-brand)]" :checked="(sys.code?.whoCanWrite ?? 'it_admin') === 'it_admin'" :disabled="savingCode" @change="saveCodeAccess('it_admin')" /><span><b>Only IT Admins</b> (and Super Admins) — safest</span></label>
+          <label class="flex items-start gap-2"><input type="radio" name="code-access" class="mt-1 accent-[var(--wb-brand)]" :checked="sys.code?.whoCanWrite === 'editors'" :disabled="savingCode" @change="saveCodeAccess('editors')" /><span><b>Everyone who builds workflows</b> (Admins and Department Managers), in workflows they may edit</span></label>
+        </div>
       </section>
 
       <section class="card p-5 animate-in" style="--i: 1">

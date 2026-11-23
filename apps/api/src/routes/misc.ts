@@ -15,9 +15,19 @@ import { scopeFilter } from './executions.js';
 import { canViewWorkflow } from '@widebed/shared';
 import { nextRun, scheduleNodes } from '../services/scheduler.js';
 
+/** Code steps: IT Admins always; everyone who can build workflows when an Admin allows it. */
+export async function canWriteCode(ctx: AppContext, user: AppUser): Promise<boolean> {
+  if (hasPermission(user, 'node.createCustom')) return true;
+  if (!hasPermission(user, 'workflow.create')) return false;
+  return (await ctx.system.settings()).code.whoCanWrite === 'editors';
+}
+
 export function meRouter(ctx: AppContext) {
   const r = Router();
-  r.get('/', (req, res) => res.json(req.user));
+  // The profile, plus what this person may do that depends on Admin settings (e.g. Code steps).
+  r.get('/', ah(async (req, res) => {
+    res.json({ ...req.user, canWriteCode: await canWriteCode(ctx, req.user!), codeLimits: { memoryMb: ctx.config.codeMaxMemoryMb } });
+  }));
   // Called once after sign-in to record the login time.
   r.post('/session', ah(async (req, res) => {
     await ctx.repos.users.update(req.user!.uid, { lastLoginAt: nowIso() });
@@ -232,7 +242,11 @@ export function systemRouter(ctx: AppContext) {
     if (body.alerts.enabled && (!body.alerts.credentialId || !body.alerts.emails.length)) {
       throw badRequest('To turn alerts on, pick a Google connection and add at least one email');
     }
-    const saved = await ctx.system.save({ ...body, ai: body.ai ?? (await ctx.system.settings()).ai });
+    const current = await ctx.system.settings();
+    const saved = await ctx.system.save({ ...body, ai: body.ai ?? current.ai, code: body.code ?? current.code });
+    if (body.code && body.code.whoCanWrite !== current.code.whoCanWrite) {
+      await ctx.audit({ actorId: req.user!.uid, action: 'settings.code', resourceType: 'settings', resourceId: 'system', metadata: { whoCanWrite: body.code.whoCanWrite } });
+    }
     await ctx.audit({ actorId: req.user!.uid, action: 'settings.update', resourceType: 'settings', resourceId: 'system', metadata: { alertsEnabled: body.alerts.enabled, recipients: body.alerts.emails.length } });
     res.json(saved);
   }));

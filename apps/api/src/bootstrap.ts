@@ -139,6 +139,7 @@ export function buildContext(config: Config, repos: Repositories, verifier: Toke
       cronWaitMs: config.CRON_WAIT_SECONDS * 1000,
       webhookWaitMs: config.VERCEL && !config.REDIS_URL ? config.WEBHOOK_WAIT_SECONDS * 1000 : 0,
       webhookReplyMs: config.WEBHOOK_REPLY_SECONDS * 1000,
+      codeMaxMemoryMb: config.CODE_MAX_MEMORY_MB,
     },
     startedAt: Date.now(),
     async shutdown() {

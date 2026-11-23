@@ -54,6 +54,8 @@ export interface AppContext {
     webhookWaitMs: number;
     /** "Wait and send back the reply" webhooks: the longest a caller waits, in ms. */
     webhookReplyMs: number;
+    /** Memory limit of Code steps, shown in the editor. */
+    codeMaxMemoryMb: number;
   };
   startedAt: number;
   /** Stops queues, schedulers and Redis connections. */

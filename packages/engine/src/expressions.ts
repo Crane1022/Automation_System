@@ -1,4 +1,5 @@
 import { todayInfo, type Item } from '@widebed/shared';
+import { evaluateFormula, FormulaError } from './formula.js';
 
 /**
  * Expression support for node fields: `{{ path }}`.
@@ -19,6 +20,8 @@ import { todayInfo, type Item } from '@widebed/shared';
 
 export interface ExpressionScope {
   item?: Item;
+  /** All output items (json) of a node that ran, by id or name — for $('Step').all(). */
+  allItems?: (node: string) => Record<string, unknown>[] | undefined;
   itemIndex?: number;
   /** First output item json of each executed node, keyed by node id and name. */
   nodes: Record<string, Record<string, unknown> | undefined>;
@@ -86,8 +89,24 @@ function walk(root: unknown, path: Segment[]): unknown {
   return cur;
 }
 
+/**
+ * Evaluates what is inside {{ }}. Simple paths take the fast path below; anything else
+ * (methods, operators, $('Step'), $now.format…) goes to the safe formula interpreter.
+ */
 export function evaluatePath(expr: string, scope: ExpressionScope): unknown {
-  const [root, ...rest] = parsePath(expr);
+  let segs: Segment[];
+  try {
+    segs = parsePath(expr);
+  } catch {
+    try {
+      return evaluateFormula(expr, scope);
+    } catch (err) {
+      if (err instanceof FormulaError) throw new ExpressionError(err.message);
+      throw new ExpressionError(`Formula “${expr.slice(0, 80)}” failed: ${(err as Error).message}`);
+    }
+  }
+  const [root, ...rest] = segs;
+  if (root === '$') return evaluateFormula(expr, scope);
   switch (root) {
     case '$json':
       return walk(scope.item?.json ?? {}, rest);
@@ -114,7 +133,7 @@ export function evaluatePath(expr: string, scope: ExpressionScope): unknown {
       return rest.length ? walk(info, rest) : info.date;
     }
     default:
-      throw new ExpressionError(`Unknown variable "${root}". Use $json, $node, $trigger, $execution, $workflow, $now, $today or $itemIndex.`);
+      throw new ExpressionError(`Unknown variable “${root}”. Use $json, $('Step name'), $node, $trigger, $now, $today, $execution, $workflow or $itemIndex.`);
   }
 }
 

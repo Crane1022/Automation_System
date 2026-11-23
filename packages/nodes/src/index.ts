@@ -16,3 +16,4 @@ export * from './nodes/unsupported.js';
 export * from './nodes/sheets.js';
 export * from './nodes/ai.js';
 export * from './nodes/chatbot.js';
+export * from './nodes/custom-step.js';

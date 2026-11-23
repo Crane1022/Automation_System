@@ -82,6 +82,8 @@ export interface NodeServices {
   apiKey?: (credentialId: string) => Promise<ApiKeyAccess>;
   /** Sets the answer a waiting webhook caller (e.g. a website chat box) receives. */
   respond?: (res: { status: number; body: unknown; contentType: 'json' | 'text' }) => Promise<void>;
+  /** A step saved by the team ("My team's steps"); null when missing or not shared with this workflow's team. */
+  customStep?: (stepId: string) => Promise<import('@widebed/shared').CustomStep | null>;
   /** Conversation memory for chatbot nodes (scoped to this workflow by the platform). */
   chatMemory?: ChatMemoryAccess;
   /** Firestore of an outside project, restricted to the credential's allowed collections. */

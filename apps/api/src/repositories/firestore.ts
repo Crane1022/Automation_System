@@ -1,5 +1,5 @@
 import { FieldValue, Timestamp, type Firestore, type Query } from 'firebase-admin/firestore';
-import type { Credential, Execution, ExecutionStep, Workflow, WorkflowVersion } from '@widebed/shared';
+import type { Credential, CustomStep, Execution, ExecutionStep, Workflow, WorkflowVersion } from '@widebed/shared';
 import type { AuditLog, ExecutionFilter, Repositories, StoredExecution, WebhookEndpoint } from './types.js';
 
 /**
@@ -45,6 +45,7 @@ export function createFirestoreRepositories(db: Firestore, opts: { retentionDays
     audit: db.collection('auditLogs'),
     settings: db.collection('systemSettings'),
     chatMemory: db.collection('workflowChatMemory'),
+    customSteps: db.collection('customSteps'),
     credentials: db.collection('credentials'),
     secrets: db.collection('credentialSecrets'),
   };
@@ -454,6 +455,14 @@ export function createFirestoreRepositories(db: Firestore, opts: { retentionDays
       async get(id) { const raw = data<any>(await C.chatMemory.doc(id).get()); if (!raw) return null; const { expireAt: _e, ...rest } = raw; return rest; },
       async set(id, value) { await C.chatMemory.doc(id).set({ ...value, expireAt: Timestamp.fromMillis(Date.now() + 90 * 86400_000) }); },
       async delete(id) { await C.chatMemory.doc(id).delete(); },
+    },
+
+    customSteps: {
+      async list() { return (await C.customSteps.limit(500).get()).docs.map((d) => d.data() as CustomStep); },
+      async get(id) { return data<CustomStep>(await C.customSteps.doc(id).get()); },
+      async create(s) { await C.customSteps.doc(s.stepId).create(s); },
+      async update(id, p) { await C.customSteps.doc(id).update(p as any); },
+      async delete(id) { await C.customSteps.doc(id).delete(); },
     },
 
     webhooks: {

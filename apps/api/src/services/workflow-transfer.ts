@@ -1,5 +1,5 @@
 import type { Credential, Workflow, WorkflowConnection, WorkflowDefinition, WorkflowNode } from '@widebed/shared';
-import { parsePath } from '@widebed/engine';
+import { parseFormula, parsePath } from '@widebed/engine';
 
 /**
  * Import / export of workflows.
@@ -171,8 +171,16 @@ export function convertValue(value: unknown, warn: (msg: string) => void, where:
     try {
       parsePath(e);
     } catch {
-      warn(`${where}: expression “{{ ${before} }}” uses JavaScript that is not supported here — rewrite it as a simple path or move the logic into a Code node.`);
-      return whole;
+      // n8n formulas (methods, operators, $now.format…) run as they are, in the safe formula engine.
+      try {
+        parseFormula(e);
+        if (/\$(env|vars|secrets|items|evaluateExpression|jmespath|ifEmpty)\b|\$prevNode|\$binary/.test(e)) {
+          warn(`${where}: “{{ ${before} }}” uses an n8n-only variable — check it after import.`);
+        }
+      } catch {
+        warn(`${where}: expression “{{ ${before} }}” uses JavaScript that formulas do not support — rewrite it, or move the logic into a Code step.`);
+        return whole;
+      }
     }
     return `{{ ${e} }}`;
   });

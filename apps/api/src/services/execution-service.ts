@@ -7,7 +7,7 @@ import type {
   Workflow,
   WorkflowDefinition,
 } from '@widebed/shared';
-import { TERMINAL_STATUSES, WORKFLOW_SCHEMA_VERSION } from '@widebed/shared';
+import { TERMINAL_STATUSES, WORKFLOW_SCHEMA_VERSION, customStepVisible } from '@widebed/shared';
 import { createHash } from 'node:crypto';
 import type { AgentRunRequest, AgentRunResult, ChatMemoryAccess, NodeRegistry, NodeServices, SafeHttpClient } from '@widebed/nodes';
 import { NodeError } from '@widebed/nodes';
@@ -316,6 +316,11 @@ export class ExecutionService {
       ai: credentials ? (id, req) => credentials.ai(id, dept, req) : undefined,
       apiKey: credentials ? (id) => credentials.apiKey(id, dept) : undefined,
       chatMemory: chatMemoryFor(this.deps.repos, exec.workflowId),
+      // Team steps: only ones shared with everyone or with this workflow's team.
+      customStep: async (stepId) => {
+        const step = await this.deps.repos.customSteps.get(stepId);
+        return step && customStepVisible(step, dept, false) ? step : null;
+      },
       // Only the first answer of a webhook run counts (the caller gets one response).
       respond: exec.triggerType === 'webhook' ? async (r) => {
         if (answered) return;

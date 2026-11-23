@@ -107,6 +107,7 @@ export const systemSettingsSchema = z.object({
       approvalHours: z.number().int().min(1).max(24 * 7),
     })
     .optional(),
+  code: z.object({ whoCanWrite: z.enum(['it_admin', 'editors']) }).optional(),
 });
 
 export const dailyQuerySchema = z.object({

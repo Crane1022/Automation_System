@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import GuideButton from '@/components/ui/GuideButton.vue';
 import { clone } from '@/lib/clone';
-import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, provide, ref } from 'vue';
 import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router';
 import { VueFlow, useVueFlow, MarkerType, type Connection, type NodeChange, type EdgeChange } from '@vue-flow/core';
 import { Background } from '@vue-flow/background';
@@ -11,7 +11,7 @@ import {
   AlertTriangle, ArrowLeft, Check, Copy, CopyPlus, Download, GitCompare, Hand, History, Loader2, Maximize, MousePointer2, Network, Play, Plus,
   Redo2, Rocket, Save, Settings2, Spline, SquareDashedMousePointer, Trash2, Undo2, X,
 } from '@lucide/vue';
-import { resolveOutputs, type HandleDescriptor } from '@widebed/shared';
+import { CUSTOM_STEP_TYPE, resolveOutputs, type HandleDescriptor } from '@widebed/shared';
 import type {
   Execution, ExecutionStep, NodeDescriptor, ValidationIssue, Workflow, WorkflowDefinition, WorkflowVersion,
 } from '@widebed/shared';
@@ -21,6 +21,7 @@ import { streamEvents } from '@/lib/api';
 import { toast, toastError } from '@/lib/toast';
 import { formatDate, timeAgo } from '@/lib/format';
 import { useNodeTypesStore } from '@/stores/nodeTypes';
+import { useCustomStepsStore, type TeamStep } from '@/stores/customSteps';
 import WorkflowNode from '@/components/editor/WorkflowNode.vue';
 import NodePalette from '@/components/editor/NodePalette.vue';
 import NodeSettingsPanel from '@/components/editor/NodeSettingsPanel.vue';
@@ -36,6 +37,7 @@ interface IssuedWebhook { webhookId: string; nodeId: string; url: string; signin
 const route = useRoute();
 const router = useRouter();
 const store = useNodeTypesStore();
+const teamSteps = useCustomStepsStore();
 const flowId = 'wb-editor';
 const {
   nodes, edges, addNodes, addEdges, removeNodes, removeEdges, setNodes, setEdges, updateNodeData, findNode,
@@ -100,6 +102,12 @@ function applySettings() {
 
 const canEdit = computed(() => !!wf.value?.permissions.edit);
 const workflowId = computed(() => String(route.params.id));
+// Lets field inputs preview {{ formulas }} and list the steps they can use.
+provide('wbFormula', {
+  workflowId,
+  nodeId: selectedId,
+  stepNames: computed(() => nodes.value.filter((n) => n.id !== selectedId.value).map((n) => (n.data as WbNodeData).name)),
+});
 const selectedNode = computed(() => (selectedId.value ? findNode<WbNodeData>(selectedId.value) : undefined));
 const selectedStep = computed(() => [...steps.value].reverse().find((s) => s.nodeId === selectedId.value));
 const errorCount = computed(() => issues.value.filter((i) => i.severity === 'error').length);
@@ -255,7 +263,25 @@ function addNode(d: NodeDescriptor, position?: { x: number; y: number }) {
   nextTick(commit);
 }
 
+/** Adds a step saved by the team ("My team's steps"). */
+function addTeamStep(t: TeamStep, position?: { x: number; y: number }) {
+  if (!canEdit.value) return;
+  const id = newId('node');
+  let pos = position;
+  if (!pos) {
+    const rect = vueFlowRef.value?.getBoundingClientRect();
+    pos = rect ? screenToFlowCoordinate({ x: rect.left + rect.width / 2 - 110, y: rect.top + rect.height / 2 - 30 }) : { x: 100, y: 100 };
+    pos = { x: pos.x + (nodes.value.length % 5) * 24, y: pos.y + (nodes.value.length % 5) * 24 };
+  }
+  addNodes([{ id, type: 'wb', position: pos, data: { nodeType: CUSTOM_STEP_TYPE, name: uniqueName(t.name), config: { stepId: t.stepId, values: {} } } satisfies WbNodeData }]);
+  selectedId.value = id;
+  nextTick(commit);
+}
+
 function onDrop(e: DragEvent) {
+  const stepId = e.dataTransfer?.getData('application/wb-step');
+  const team = stepId ? teamSteps.get(stepId) : undefined;
+  if (team) return addTeamStep(team, screenToFlowCoordinate({ x: e.clientX - 110, y: e.clientY - 28 }));
   const type = e.dataTransfer?.getData('application/wb-node');
   const d = type ? store.get(type) : undefined;
   if (!d) return;
@@ -780,7 +806,7 @@ const copy = (text: string) => navigator.clipboard.writeText(text).then(() => to
     <div v-if="loadError" class="flex-1 grid place-items-center text-[13px] text-bad">{{ loadError }}</div>
 
     <div v-else class="flex-1 min-h-0 flex">
-      <NodePalette v-if="canEdit" ref="palette" @add="addNode($event)" />
+      <NodePalette v-if="canEdit" ref="palette" @add="addNode($event)" @add-step="addTeamStep($event)" />
 
       <div class="flex-1 min-w-0 flex flex-col">
         <div class="flex-1 min-h-0 relative" :class="`wb-canvas-${tool}`" @drop.prevent="onDrop" @dragover.prevent>

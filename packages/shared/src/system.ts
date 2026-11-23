@@ -19,11 +19,16 @@ export interface SystemSettings {
     /** Hours before an unanswered approval expires (critical ones: at most 2 hours). */
     approvalHours: number;
   };
+  /** Code steps (JavaScript). Default: only IT Admins and Super Admins may add or change them. */
+  code: {
+    whoCanWrite: 'it_admin' | 'editors';
+  };
 }
 
 export const DEFAULT_SYSTEM_SETTINGS: SystemSettings = {
   alerts: { enabled: false, emails: [], credentialId: null, cooldownMinutes: 60 },
   ai: { lowRiskPolicy: 'auto_in_chat', approvalHours: 24 },
+  code: { whoCanWrite: 'it_admin' },
 };
 
 /** One day on the Overview chart. `date` is YYYY-MM-DD in the server's local calendar. */

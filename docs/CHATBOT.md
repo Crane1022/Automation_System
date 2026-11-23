@@ -70,3 +70,10 @@ and stay “Running”. So on Vercel without Redis, a webhook call now **stays o
    *System Prompt* (Google), *Talk to Your Data1* (AI + Google account for look-ups), *Reply to GHL* (Sign in with).
 4. Test run with a sample body, check Executions → each step.
 5. Publish, copy the new webhook URL, change the GoHighLevel workflow’s webhook to it. Switch n8n’s copy off.
+
+## Customise any step (23 Nov 2026)
+
+- **Formulas in every box** — type `{{ … }}` like in n8n: `{{ $json.message.trim() }}`, `{{ $('Webhook').item.json.body.contactId }}`, `{{ $now.format('yyyy-MM-dd') }}`, `{{ $json.rooms.map(r => r.name).join(', ') }}`. The **fx** button lists your earlier steps and common formulas, and shows the result using the last test run.
+- **JSON tab** on every step — see and edit every setting at once, copy it, or **Paste from n8n** (select a node in n8n, Ctrl+C, paste).
+- **Code steps** — IT Admins by default. An Admin can allow everyone who builds workflows in **Settings → Code steps**. Code always runs in a sandbox with no internet, a time limit and a memory limit.
+- **Team steps** — on any step click **Save for team**, tick the boxes the team may change, and it appears under **My team's steps** in the step list. Fixing the saved step fixes every workflow that uses it. "Change all settings here instead" turns it back into a normal step.

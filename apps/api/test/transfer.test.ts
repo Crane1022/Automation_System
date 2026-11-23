@@ -93,7 +93,8 @@ describe('n8n import', () => {
     expect(report.converted.map((c: any) => c.to).sort()).toEqual(['comm.gmailSend', 'comm.sheetsRead', 'data.code', 'logic.if', 'logic.merge', 'trigger.schedule']);
     expect(report.unsupported).toEqual([{ name: 'Make card', type: 'n8n-nodes-base.trello', reason: 'No equivalent node yet' }]);
     expect(report.needsCredential).toEqual(['Read sheet', 'Email guest']);
-    expect(report.warnings.join('\n')).toMatch(/toDateTime/);
+    // n8n formulas such as .toDateTime().toFormat() now run as they are: no warning.
+    expect(report.warnings.join('\n')).not.toMatch(/toDateTime/);
     expect(report.warnings.join('\n')).toMatch(/Sender name/);
 
     const wf = await request(app).get(`/api/workflows/${res.body.workflow.workflowId}`).set(as('boss'));
@@ -143,7 +144,7 @@ describe('n8n import', () => {
   it('refuses files with Code nodes for users who may not write code', async () => {
     const res = await request(app).post('/api/workflows/import').set(as('ops')).send({ file: n8nFile });
     expect(res.status).toBe(403);
-    expect(res.body.error).toMatch(/Code nodes/);
+    expect(res.body.error).toMatch(/Code steps/);
   });
 
   it('rejects files that are not workflows', async () => {

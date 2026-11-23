@@ -29,7 +29,7 @@ export class SystemService {
 
   async settings(): Promise<SystemSettings> {
     const saved = (await this.d.repos.settings.get<Partial<SystemSettings>>(KEY)) ?? {};
-    return { ...DEFAULT_SYSTEM_SETTINGS, ...saved, alerts: { ...DEFAULT_SYSTEM_SETTINGS.alerts, ...(saved.alerts ?? {}) }, ai: { ...DEFAULT_SYSTEM_SETTINGS.ai, ...(saved.ai ?? {}) } };
+    return { ...DEFAULT_SYSTEM_SETTINGS, ...saved, alerts: { ...DEFAULT_SYSTEM_SETTINGS.alerts, ...(saved.alerts ?? {}) }, ai: { ...DEFAULT_SYSTEM_SETTINGS.ai, ...(saved.ai ?? {}) }, code: { ...DEFAULT_SYSTEM_SETTINGS.code, ...(saved.code ?? {}) } };
   }
 
   async save(value: SystemSettings) {

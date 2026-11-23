@@ -18,6 +18,10 @@ export interface AppUser {
   status: UserStatus;
   createdAt: string;
   lastLoginAt: string | null;
+  /** Sent by GET /api/me only: may add/change Code steps (depends on Settings → Code steps). */
+  canWriteCode?: boolean;
+  /** Sent by GET /api/me only. */
+  codeLimits?: { memoryMb: number };
 }
 
 export type Permission =

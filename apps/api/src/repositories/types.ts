@@ -1,6 +1,7 @@
 import type {
   AppUser,
   Credential,
+  CustomStep,
   Execution,
   ExecutionStatus,
   ExecutionStep,
@@ -274,6 +275,15 @@ export interface ChatMemoryRepo {
   delete(id: string): Promise<void>;
 }
 
+/** Saved team steps ("My team's steps"). Few per company, so list() returns all of them. */
+export interface CustomStepsRepo {
+  list(): Promise<CustomStep[]>;
+  get(id: string): Promise<CustomStep | null>;
+  create(step: CustomStep): Promise<void>;
+  update(id: string, patch: Partial<CustomStep>): Promise<void>;
+  delete(id: string): Promise<void>;
+}
+
 export interface SettingsRepo {
   get<T = unknown>(key: string): Promise<T | null>;
   set(key: string, value: unknown): Promise<void>;
@@ -326,6 +336,7 @@ export interface Repositories {
   usage: UsageRepo;
   settings: SettingsRepo;
   chatMemory: ChatMemoryRepo;
+  customSteps: CustomStepsRepo;
   webhooks: WebhooksRepo;
   audit: AuditRepo;
   credentials: CredentialsRepo;

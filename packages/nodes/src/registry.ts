@@ -13,6 +13,7 @@ import { sheetsCreateRow, sheetsRead, sheetsUpdateRow } from './nodes/sheets.js'
 import { aiAgent, aiChat, aiClassify, aiExtract } from './nodes/ai.js';
 import { aiChatbot } from './nodes/chatbot.js';
 import { unsupportedNode } from './nodes/unsupported.js';
+import { customStepNode } from './nodes/custom-step.js';
 
 /**
  * The node registry. To add a node type:
@@ -74,6 +75,7 @@ export function createDefaultRegistry(): NodeRegistry {
   ];
   const registry = new NodeRegistry();
   for (const n of all) registry.register(n as NodeImplementation);
+  registry.register(customStepNode(registry) as unknown as NodeImplementation);
   return registry;
 }
 

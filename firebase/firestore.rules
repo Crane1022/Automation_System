@@ -44,6 +44,8 @@ service cloud.firestore {
     match /webhookEndpoints/{id} { allow read, write: if false; }
     // AI Chatbot conversation memory (per workflow + conversation). TTL on expireAt.
     match /workflowChatMemory/{id} { allow read, write: if false; }
+    // Saved team steps ("My team's steps"); only the API reads and writes them.
+    match /customSteps/{id} { allow read, write: if false; }
     match /credentials/{id} { allow read, write: if false; }
     match /auditLogs/{id} { allow read, write: if false; }
     match /systemSettings/{id} { allow read, write: if false; }

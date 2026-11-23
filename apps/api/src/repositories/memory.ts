@@ -1,4 +1,4 @@
-import type { Credential, Execution, ExecutionStep, Workflow, WorkflowVersion } from '@widebed/shared';
+import type { Credential, CustomStep, Execution, ExecutionStep, Workflow, WorkflowVersion } from '@widebed/shared';
 import type {
   AuditLog,
   ExecutionFilter,
@@ -32,6 +32,7 @@ export function createMemoryRepositories(): Repositories {
   const kChunks = new Map<string, any[]>();
   const settings = new Map<string, unknown>();
   const chatMemory = new Map<string, any>();
+  const customSteps = new Map<string, CustomStep>();
   const webhooks = new Map<string, WebhookEndpoint>();
   const audit: AuditLog[] = [];
   const creds = new Map<string, Credential>();
@@ -252,6 +253,13 @@ export function createMemoryRepositories(): Repositories {
       async get(id) { return chatMemory.has(id) ? clone(chatMemory.get(id)) : null; },
       async set(id, v) { chatMemory.set(id, clone(v)); },
       async delete(id) { chatMemory.delete(id); },
+    },
+    customSteps: {
+      async list() { return [...customSteps.values()].map(clone); },
+      async get(id) { return customSteps.has(id) ? clone(customSteps.get(id)!) : null; },
+      async create(s) { customSteps.set(s.stepId, clone(s)); },
+      async update(id, p) { if (customSteps.has(id)) customSteps.set(id, { ...customSteps.get(id)!, ...clone(p) }); },
+      async delete(id) { customSteps.delete(id); },
     },
     webhooks: {
       async create(w) { webhooks.set(w.webhookId, clone(w)); },

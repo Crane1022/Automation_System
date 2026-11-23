@@ -205,6 +205,10 @@ export async function runWorkflow(opts: RunWorkflowOptions): Promise<RunResult> 
 
     const scopeBase: Omit<ExpressionScope, 'item' | 'itemIndex'> = {
       nodes: firstJson,
+      allItems: (name) => {
+        const id = nodesById.has(name) ? name : def.nodes.find((x) => x.name === name)?.id;
+        return id ? outputs[id]?.main?.map((i) => i.json) : undefined;
+      },
       trigger: outputs[start.id]?.main?.[0]?.json,
       executionId: opts.executionId,
       workflowId: opts.workflowId,

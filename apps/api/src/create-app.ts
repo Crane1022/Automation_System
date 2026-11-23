@@ -5,6 +5,7 @@ import { createAuth } from './middleware/auth.js';
 import { errorHandler } from './middleware/errors.js';
 import { rateLimit } from './middleware/rate-limit.js';
 import { workflowsRouter } from './routes/workflows.js';
+import { customStepsRouter } from './routes/custom-steps.js';
 import { executionsRouter } from './routes/executions.js';
 import { publicWebhookRouter } from './routes/webhooks-public.js';
 import { publicEventsRouter } from './routes/events-public.js';
@@ -63,6 +64,7 @@ export function createApp(ctx: AppContext) {
   api.use('/me', meRouter(ctx));
   api.use('/users', usersRouter(ctx, invalidate));
   api.use('/workflows', workflowsRouter(ctx));
+  api.use('/custom-steps', customStepsRouter(ctx));
   api.use('/folders', foldersRouter(ctx));
   api.use('/people', peopleRouter(ctx));
   api.use('/templates', templatesRouter(ctx));

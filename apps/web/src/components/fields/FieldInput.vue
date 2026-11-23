@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { clone } from '@/lib/clone';
-import { computed, watch } from 'vue';
+import { computed, inject, onBeforeUnmount, ref, watch, type ComputedRef, type Ref } from 'vue';
+import { api } from '@/lib/api';
 import { Plus, X, Braces } from '@lucide/vue';
 import type { FieldDescriptor } from '@widebed/shared';
 import { PROVIDER_LABELS, type CredentialProvider } from '@widebed/shared';
@@ -111,6 +112,53 @@ function addRecord() {
   value.value = [...records.value, Object.fromEntries((props.field.itemFields ?? []).map((f) => [f.key, f.default ?? '']))];
 }
 
+/* ---------- formulas: fx helper + preview from the last run ---------- */
+const formula = inject<{ workflowId: ComputedRef<string>; nodeId: Ref<string | null>; stepNames: ComputedRef<string[]> } | null>('wbFormula', null);
+const canFormula = computed(() => !!props.field.expressions && ['string', 'text', 'code'].includes(props.field.type));
+const showFx = ref(false);
+const preview = ref<{ ok: boolean; text: string; fromRun: boolean } | null>(null);
+let timer: ReturnType<typeof setTimeout> | null = null;
+watch(
+  () => [value.value, formula?.nodeId.value] as const,
+  ([v]) => {
+    if (timer) clearTimeout(timer);
+    if (!formula || !canFormula.value || typeof v !== 'string' || !v.includes('{{') || !formula.nodeId.value) {
+      preview.value = null;
+      return;
+    }
+    timer = setTimeout(async () => {
+      try {
+        const r = await api<{ ok: boolean; value?: unknown; error?: string; fromRun: boolean }>(`/workflows/${formula.workflowId.value}/preview-expression`, {
+          method: 'POST',
+          body: { nodeId: formula.nodeId.value, value: v },
+          quiet: true,
+        });
+        const shown = r.ok ? (typeof r.value === 'string' ? r.value : JSON.stringify(r.value)) ?? '' : r.error ?? '';
+        preview.value = { ok: r.ok, text: shown.length > 300 ? `${shown.slice(0, 300)}…` : shown, fromRun: r.fromRun };
+      } catch {
+        preview.value = null;
+      }
+    }, 450);
+  },
+  { immediate: true },
+);
+onBeforeUnmount(() => timer && clearTimeout(timer));
+const FX_FUNCTIONS: { label: string; insert: string }[] = [
+  { label: 'Current item', insert: '{{ $json. }}' },
+  { label: 'Today’s date', insert: '{{ $today }}' },
+  { label: 'Date format', insert: "{{ $now.format('d MMM yyyy') }}" },
+  { label: 'In 3 days', insert: "{{ $now.plus(3, 'days').format('yyyy-MM-dd') }}" },
+  { label: 'UPPER CASE', insert: '{{ $json.name.toUpperCase() }}' },
+  { label: 'First word', insert: "{{ $json.name.split(' ')[0] }}" },
+  { label: 'If … else', insert: "{{ $json.total > 100 ? 'yes' : 'no' }}" },
+  { label: 'List → text', insert: "{{ $json.items.map(x => x.name).join(', ') }}" },
+  { label: 'Fallback if empty', insert: "{{ $json.name || 'Guest' }}" },
+];
+function insertFx(text: string) {
+  const cur = typeof value.value === 'string' ? value.value : '';
+  value.value = cur ? `${cur}${/\s$/.test(cur) ? '' : ' '}${text}` : text;
+}
+
 const jsonError = computed(() => {
   if (props.field.type !== 'json' || typeof value.value !== 'string' || !value.value.trim()) return null;
   try {
@@ -126,7 +174,16 @@ const jsonError = computed(() => {
   <div>
     <div class="flex items-center justify-between">
       <label class="label">{{ field.label }}<span v-if="field.required" class="text-bad"> *</span></label>
-      <span v-if="field.expressions" class="text-[10px] text-subtle inline-flex items-center gap-0.5 mb-1" :title="'Supports {{ expressions }}'"><Braces class="size-3" />expr</span>
+      <button
+        v-if="canFormula && formula && !readonly"
+        type="button"
+        class="text-[10.5px] font-semibold font-mono px-1.5 h-5 rounded mb-1 inline-flex items-center gap-0.5 transition-colors"
+        :class="showFx ? 'bg-[#6c4a8f] text-white' : 'bg-[#efe8f5] text-[#6c4a8f] hover:bg-[#e4d8f0]'"
+        :aria-expanded="showFx"
+        title="Insert data or a formula"
+        @click="showFx = !showFx"
+      >fx</button>
+      <span v-else-if="field.expressions" class="text-[10px] text-subtle inline-flex items-center gap-0.5 mb-1" :title="'Supports {{ expressions }}'"><Braces class="size-3" />expr</span>
     </div>
 
     <input v-if="field.type === 'string'" v-model="value" class="input font-[450]" :placeholder="field.placeholder" :readonly="readonly" />
@@ -254,6 +311,26 @@ const jsonError = computed(() => {
       <p class="text-[11px] text-subtle">Numbers and true/false are converted automatically. For “in”, use a JSON list like ["a","b"].</p>
     </div>
 
+    <div v-if="showFx && formula" class="mt-1.5 rounded-md border border-line bg-surface shadow-sm text-[12px] overflow-hidden">
+      <div class="px-2.5 py-1.5 bg-surface-2 border-b border-line text-muted font-medium">Insert data · click to add</div>
+      <div class="grid grid-cols-2">
+        <div class="p-2 border-r border-line space-y-1 max-h-48 overflow-y-auto">
+          <div class="text-[10.5px] font-bold text-subtle tracking-wide">STEPS</div>
+          <button v-for="n in formula.stepNames.value" :key="n" type="button" class="block w-full text-left font-mono text-[11.5px] text-[#7c3aed] hover:underline truncate" @click="insertFx(`{{ $('${n.replace(/'/g, '\\\'')}').item.json. }}`)">$('{{ n }}')</button>
+          <button type="button" class="block font-mono text-[11.5px] text-[#7c3aed] hover:underline" @click="insertFx('{{ $json. }}')">$json</button>
+        </div>
+        <div class="p-2 space-y-1 max-h-48 overflow-y-auto">
+          <div class="text-[10.5px] font-bold text-subtle tracking-wide">FORMULAS</div>
+          <button v-for="f in FX_FUNCTIONS" :key="f.label" type="button" class="block w-full text-left text-[11.5px] text-[#b45309] hover:underline truncate" :title="f.insert" @click="insertFx(f.insert)">{{ f.label }}</button>
+        </div>
+      </div>
+      <div class="px-2.5 py-1.5 border-t border-line text-[11px] text-subtle">Works like n8n: <span class="font-mono">$('Step').item.json.x</span>, <span class="font-mono">.toUpperCase()</span>, <span class="font-mono">a ? b : c</span>. Formulas cannot reach the internet or files.</div>
+    </div>
+    <p v-if="preview" class="text-[11px] mt-1 leading-snug break-words" :class="preview.ok ? 'text-ok' : 'text-bad'">
+      <template v-if="preview.ok && preview.fromRun">Preview from the last run: <span class="font-mono bg-ok-soft px-1 rounded">{{ preview.text === '' ? '(empty)' : preview.text }}</span></template>
+      <template v-else-if="preview.ok">Preview (no run yet): <span class="font-mono">{{ preview.text === '' ? '(empty)' : preview.text }}</span></template>
+      <template v-else>Formula problem: {{ preview.text }}</template>
+    </p>
     <p v-if="jsonError" class="text-[11px] text-bad mt-1">Invalid JSON: {{ jsonError }}</p>
     <p v-else-if="field.help" class="text-[11px] text-subtle mt-1 leading-snug">{{ field.help }}</p>
   </div>
