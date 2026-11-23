@@ -12,6 +12,10 @@
  *   action "start"   - the visitor filled in their details (ask-details mode): profile = { name, phone, phoneKey, countryCode, phoneNumber, email }
  *   action "message" - a chat message (message = the text)
  *   action "end"     - the visitor clicked End chat: forget the conversation (the box then starts fresh)
+ * Bot replies: **bold** and web links are shown formatted (everything else stays plain text, never HTML).
+ * A reply that ends with [[ask: Booking number; Check-in date (date); Guests (number); Room (choice: Studio/1 Bedroom);
+ * Notes (long, optional)]] shows those boxes as a small form; Send posts them as one message ("Booking number: ...").
+ * Box types: text (default), date, time, number, email, phone, long, choice: A/B/C; add "optional" for boxes that may stay empty.
  * Optional: data-ask-details="true" (ask name, phone with country code and email on the first visit),
  * data-idle-minutes="5" (show "End chat" after this long without a message), data-country="+60".
  * Everything lives in a shadow root, so the website's CSS cannot break it (and it cannot break the website).
@@ -120,6 +124,16 @@
     '.bot{background:#fff;border:1px solid #e3e6ea;align-self:flex-start;border-bottom-left-radius:4px}' +
     '.me{background:' + cfg.color + ';color:#fff;align-self:flex-end;border-bottom-right-radius:4px}' +
     '.err{background:#fdecea;color:#a3271f;align-self:flex-start;font-size:13px}' +
+    '.bot b{font-weight:700}.bot a{color:' + cfg.color + ';text-decoration:underline;word-break:break-all}' +
+    '.askf{align-self:flex-start;width:86%;background:#fff;border:1px solid #e3e6ea;border-radius:14px;padding:12px;display:flex;flex-direction:column;gap:9px}' +
+    '.askf label{display:block;font-size:12px;font-weight:600;color:#3d4550;margin-bottom:3px}.askf label i{font-weight:400;color:#8a929c;font-style:normal}' +
+    '.askf input,.askf select,.askf textarea{width:100%;border:1px solid #d5d9de;border-radius:9px;padding:8px 9px;font-size:14px;background:#fff;color:#1b1f24;outline:none;font-family:inherit}' +
+    '.askf textarea{min-height:64px;resize:vertical}.askf input:focus,.askf select:focus,.askf textarea:focus{border-color:' + cfg.color + '}' +
+    '.askf .row{display:flex;gap:6px}.askf .row select{width:100px;flex:none}.askf .bad{border-color:#d93025}' +
+    '.askf .chips{display:flex;flex-wrap:wrap;gap:6px}.askf .chip{border:1px solid #d5d9de;background:#fff;border-radius:999px;padding:6px 11px;font-size:13px;cursor:pointer;color:#1b1f24}' +
+    '.askf .chip.on{background:' + cfg.color + ';border-color:' + cfg.color + ';color:#fff}' +
+    '.askf .amsg{color:#a3271f;font-size:12px;min-height:0}.askf .asend{border:0;border-radius:9px;padding:9px;background:' + cfg.color + ';color:#fff;font-weight:600;cursor:pointer}' +
+    '.askf.done{opacity:.6}.askf.done .asend{cursor:default}' +
     '.dots{align-self:flex-start;background:#fff;border:1px solid #e3e6ea;border-radius:14px;padding:10px 14px;display:none}.dots.on{display:block}' +
     '.dots i{display:inline-block;width:6px;height:6px;margin:0 2px;border-radius:50%;background:#9aa3ad;animation:b 1s infinite}.dots i:nth-child(2){animation-delay:.15s}.dots i:nth-child(3){animation-delay:.3s}' +
     '@keyframes b{0%,80%,100%{opacity:.3;transform:translateY(0)}40%{opacity:1;transform:translateY(-3px)}}' +
@@ -172,11 +186,166 @@
   dots.className = 'dots';
   dots.innerHTML = '<i></i><i></i><i></i>';
 
+  /* ---------- bot replies: **bold**, links, and [[ask: ...]] forms ---------- */
+  var ASK = /\[\[\s*ask\s*:\s*([\s\S]*?)\]\]/i;
+  var TYPES = ['date', 'time', 'number', 'email', 'phone', 'long'];
+  function parseField(raw) {
+    var s = String(raw).trim();
+    if (!s) return null;
+    var m = /^(.*?)\s*\(([^)]*)\)\s*$/.exec(s);
+    var f = { label: (m ? m[1] : s).trim().slice(0, 60), type: 'text', optional: false, choices: null };
+    if (!f.label) return null;
+    (m ? m[2] : '').split(',').forEach(function (o) {
+      o = o.trim();
+      var lo = o.toLowerCase();
+      if (lo === 'optional') f.optional = true;
+      else if (/^choices?\s*:/.test(lo)) {
+        f.type = 'choice';
+        f.choices = o.slice(o.indexOf(':') + 1).split('/').map(function (c) { return c.trim().slice(0, 40); }).filter(Boolean).slice(0, 8);
+      } else if (TYPES.indexOf(lo) >= 0) f.type = lo;
+      else if (lo === 'text' || lo === 'textarea') f.type = lo === 'text' ? 'text' : 'long';
+    });
+    if (f.type === 'choice' && !(f.choices && f.choices.length)) f.type = 'text';
+    return f;
+  }
+  function parseAsk(text) {
+    var m = ASK.exec(text);
+    if (!m) return { text: text, fields: null };
+    var fields = m[1].split(/;|\n/).map(parseField).filter(Boolean).slice(0, 8);
+    return { text: text.replace(ASK, '').trim(), fields: fields.length ? fields : null };
+  }
+  // Escapes everything first, then turns **bold** and web addresses into <b> and links. Nothing else becomes HTML.
+  function format(text) {
+    return esc(text)
+      .replace(/\*\*([^*\n][^*]*?)\*\*/g, '<b>$1</b>')
+      .replace(/(^|[\s(])(https?:\/\/[^\s<)]+)/g, function (all, pre, url) {
+        var clean = url.replace(/[.,!?;:]+$/, '');
+        return pre + '<a href="' + clean + '" target="_blank" rel="noopener noreferrer">' + clean + '</a>' + url.slice(clean.length);
+      });
+  }
+  var openForms = [];
+  function closeForms() {
+    openForms.forEach(function (f) { f.close(); });
+    openForms = [];
+  }
+  function askForm(fields) {
+    var box = document.createElement('div');
+    box.className = 'askf';
+    var getters = [];
+    fields.forEach(function (f, i) {
+      var wrap = document.createElement('div');
+      var id = 'wb-ask-' + Date.now().toString(36) + i;
+      var lab = document.createElement('label');
+      lab.setAttribute('for', id);
+      lab.textContent = f.label + ' ';
+      if (f.optional) { var opt = document.createElement('i'); opt.textContent = '(optional)'; lab.appendChild(opt); } else lab.appendChild(document.createTextNode('*'));
+      wrap.appendChild(lab);
+      var input, cc = null, picked = '';
+      if (f.type === 'choice') {
+        input = document.createElement('div');
+        input.className = 'chips';
+        input.id = id;
+        f.choices.forEach(function (c) {
+          var b = document.createElement('button');
+          b.type = 'button';
+          b.className = 'chip';
+          b.textContent = c;
+          b.addEventListener('click', function () {
+            if (box.classList.contains('done')) return;
+            picked = picked === c ? '' : c;
+            [].forEach.call(input.children, function (x) { x.classList.toggle('on', x.textContent === picked); });
+          });
+          input.appendChild(b);
+        });
+        wrap.appendChild(input);
+      } else if (f.type === 'phone') {
+        var row = document.createElement('div');
+        row.className = 'row';
+        cc = document.createElement('select');
+        cc.setAttribute('aria-label', f.label + ' country code');
+        var mine = profile && profile.countryCode ? profile.countryCode : cfg.country;
+        COUNTRIES.forEach(function (c) {
+          var o = document.createElement('option');
+          o.value = c[0];
+          o.textContent = (c[1] ? c[1] + ' ' : '') + c[0];
+          if (c[0] === mine) o.selected = true;
+          cc.appendChild(o);
+        });
+        input = document.createElement('input');
+        input.type = 'tel';
+        input.inputMode = 'tel';
+        input.maxLength = 20;
+        input.id = id;
+        row.appendChild(cc);
+        row.appendChild(input);
+        wrap.appendChild(row);
+      } else {
+        input = document.createElement(f.type === 'long' ? 'textarea' : 'input');
+        if (f.type !== 'long') input.type = { date: 'date', time: 'time', number: 'number', email: 'email' }[f.type] || 'text';
+        if (f.type === 'number') { input.min = '0'; input.inputMode = 'numeric'; }
+        if (f.type === 'email' && profile && /email/i.test(f.label)) input.value = profile.email || '';
+        if (f.type === 'text' && profile && /^(full )?name$/i.test(f.label)) input.value = profile.name || '';
+        input.maxLength = f.type === 'long' ? 1000 : 200;
+        input.id = id;
+        wrap.appendChild(input);
+      }
+      if (f.type === 'phone' && profile && profile.phoneNumber && /phone|mobile|whatsapp/i.test(f.label)) input.value = profile.phoneNumber;
+      getters.push(function () {
+        var v;
+        if (f.type === 'choice') v = picked;
+        else if (f.type === 'phone') { var d = input.value.replace(/[^0-9]/g, '').replace(/^0+/, ''); v = d ? cc.value + d : ''; }
+        else v = input.value.trim();
+        var ok = f.optional && !v ? true
+          : !!v && (f.type !== 'email' || /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(v))
+            && (f.type !== 'phone' || (v.replace(/[^0-9]/g, '').length >= 8 && v.replace(/[^0-9]/g, '').length <= 16));
+        if (input.classList) input.classList.toggle('bad', !ok);
+        return { ok: ok, label: f.label, value: v };
+      });
+      box.appendChild(wrap);
+    });
+    var msg = document.createElement('div');
+    msg.className = 'amsg';
+    msg.setAttribute('role', 'alert');
+    var btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'asend';
+    btn.textContent = 'Send';
+    box.appendChild(msg);
+    box.appendChild(btn);
+    var form = {
+      close: function () {
+        box.classList.add('done');
+        [].forEach.call(box.querySelectorAll('input,select,textarea,button'), function (x) { x.disabled = true; });
+      },
+    };
+    btn.addEventListener('click', function () {
+      if (busy || box.classList.contains('done')) return;
+      var vals = getters.map(function (g) { return g(); });
+      var bad = vals.filter(function (v) { return !v.ok; });
+      if (bad.length) { msg.textContent = 'Please fill in: ' + bad.map(function (b) { return b.label; }).join(', ') + '.'; return; }
+      msg.textContent = '';
+      var text = vals.filter(function (v) { return v.value; }).map(function (v) { return v.label + ': ' + v.value; }).join('\n') || '(no details)';
+      if (cfg.broken) { add('err', 'This chat box is not set up yet: the webhook URL is missing.', false); return; }
+      add('me', text, true);
+      touch();
+      call({ action: 'message', message: text }, null);
+    });
+    box.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter' && e.target && e.target.tagName === 'INPUT') { e.preventDefault(); btn.click(); }
+    });
+    openForms.push(form);
+    return box;
+  }
+
   function add(kind, text, save) {
     var el = document.createElement('div');
     el.className = 'm ' + kind;
-    el.textContent = text; // never HTML: replies are shown as plain text
+    var ask = kind === 'bot' ? parseAsk(String(text)) : null;
+    if (kind === 'me') closeForms(); // answered (by the form or by typing): earlier forms close
+    if (ask) el.innerHTML = format(ask.text || 'Please fill in:'); // escaped first: only <b> and links are HTML
+    else el.textContent = text;
     log.insertBefore(el, dots);
+    if (ask && ask.fields) log.insertBefore(askForm(ask.fields), dots);
     log.scrollTop = log.scrollHeight;
     if (save) {
       history.push({ k: kind, t: text });
@@ -274,6 +443,7 @@
     var old = sessionId;
     // Tell the workflow to forget this conversation (best effort: the box starts fresh either way).
     if (!cfg.broken) post(JSON.stringify(payloadFor({ action: 'end' }, old)), null).catch(function () {});
+    closeForms();
     sessionId = newSessionId();
     history = [];
     profile = null;
