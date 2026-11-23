@@ -528,10 +528,17 @@ describe('Website chat that knows the guest (template)', () => {
   const web = fakeWeb();
   const repos = createMemoryRepositories();
   const guests = [{ id: 'main', data: { kind: 'tenant', name: 'Ana Lee', phone: '012-345 6789', phoneKey: '60123456789', email: 'ana@example.com' } }];
+  const bookings = [
+    { id: 'offline_DM-014', data: { bookingNo: 'DM-014', tenantId: 'TEN-0001', unitCode: 'A-12-3', propertyName: 'D Majestic', arrival: '2026-12-01', departure: '2026-12-04', status: 'active' } },
+    { id: 'offline_DM-020', data: { bookingNo: 'DM-020', tenantId: 'TEN-0009', unitCode: 'B-1-1', propertyName: 'D Majestic', arrival: '2026-12-02', departure: '2026-12-03', status: 'active' } },
+  ];
   const queries: any[] = [];
   const fs = {
     query: async (collection: string, o: any) => {
       queries.push({ collection, ...o });
+      if (collection === 'offlineBookings') {
+        return bookings.filter((b: any) => o.where.every((w: any) => b.data[w.field] === w.value)).slice(0, o.limit).map((b) => ({ ...b, path: `offlineBookings/${b.id}` }));
+      }
       return guests.filter((g: any) => o.where.every((w: any) => g.data[w.field] === w.value)).slice(0, o.limit).map((g) => ({ ...g, path: `tenants/TEN-0001/private/${g.id}` }));
     },
     get: async () => null,
@@ -576,9 +583,23 @@ describe('Website chat that knows the guest (template)', () => {
     expect(replies).toEqual([{ reply: 'Parking is on level 3, bay 12.' }]);
     expect(ai.calls[1]!.system).toContain('Guest name: Ana Lee');
     expect(ai.calls[1]!.system).toContain('Type of question: Property Units');
+    // Bookings come from Widebed PMS (offlineBookings of this tenant), not from a sheet.
+    expect(ai.calls[1]!.system).toContain('DM-014: A-12-3 at D Majestic, 2026-12-01 to 2026-12-04 (active)');
+    expect(ai.calls[1]!.system).not.toContain('DM-020');
+    expect(queries.at(-1)).toMatchObject({ collection: 'offlineBookings', where: [{ field: 'tenantId', op: '==', value: 'TEN-0001' }], limit: 10 });
     expect(ai.calls[2]!.prompt).toContain('Level 3, bay 12');
     expect(web.sheetReads).toContain('Property Units');
     expect((await chatMemoryFor(repos, 'wf_guest_chat').load('s1')).length).toBe(2);
+  });
+
+  it('a visitor whose phone is not in the PMS gets no bookings (and no booking query)', async () => {
+    const ai = fakeAi(['{"category":"FAQ","reason":"x"}', '{"reply":"Check-in is from 3 pm."}']);
+    const before = queries.length;
+    const { replies } = await run({ action: 'message', message: 'Check-in time?', sessionId: 's9', profile: profile('+60199999999', 'zz@example.com') }, ai);
+    expect(replies).toEqual([{ reply: 'Check-in is from 3 pm.' }]);
+    expect(ai.calls[1]!.system).toContain('No booking found for this phone number.');
+    expect(queries.slice(before).map((q) => q.collection)).toEqual(['tenants/*/private']);
+    expect(web.sheetReads.at(-1)).toBe('System Prompt');
   });
 
   it('End chat forgets the conversation', async () => {

@@ -299,7 +299,7 @@ export const BUILT_IN_TEMPLATES: WorkflowTemplate[] = [
   builtIn({
     templateId: 'tpl_ai_website_guest_chat',
     name: 'AI: website chat that knows the guest',
-    description: 'Website chat box that first asks the visitor’s name, phone (with country code) and email, welcomes back guests found in Firebase, sorts each question by type and answers from the matching Google Sheets tab. “End chat” forgets the conversation.',
+    description: 'Website chat box that first asks the visitor’s name, phone (with country code) and email, welcomes back guests found in Widebed PMS, gives the AI the guest’s PMS bookings, sorts each question by type and answers from the matching Google Sheets tab. “End chat” forgets the conversation.',
     category: 'AI',
     needs: [
       AI_NEED,
@@ -345,7 +345,6 @@ export const BUILT_IN_TEMPLATES: WorkflowTemplate[] = [
         { ...n('g8', 'ai.classify', 'Sort the question', {
           text: '{{ $json.body.message }}',
           categories: [
-            { id: 'c_booking', label: 'Booking Details', value: 'About an existing booking: booking number, the guest’s dates, payment of their booking, extending or changing their stay' },
             { id: 'c_units', label: 'Property Units', value: 'About a unit or property: address, directions, parking, Wi-Fi, facilities, rooms, check-in steps' },
             { id: 'c_maint', label: 'Maintenance Data', value: 'Something is broken, dirty or not working; repairs and cleaning' },
             { id: 'c_team', label: 'Customer Service Team', value: 'Wants to talk to a person, contact numbers, complaints' },
@@ -353,21 +352,22 @@ export const BUILT_IN_TEMPLATES: WorkflowTemplate[] = [
           ],
           instructions: 'Greetings, thanks and short replies such as “yes” or “ok” belong to FAQ.',
         }, true), position: { x: 640, y: 280 } },
-        { ...n('g9', 'comm.sheetsRead', 'System Prompt', { spreadsheet: '', sheet: 'System Prompt', headerRow: 1, filters: [], returnMode: 'first', valueMode: 'formatted' }, true), position: { x: 960, y: 280 } },
+        { ...n('g14', 'data.firebaseRead', 'Find guest', { mode: 'query', collection: 'tenants/*/private', where: [{ field: 'kind', op: '==', value: 'tenant' }, { field: 'phoneKey', op: '==', value: '"{{ $json.body.profile.phoneKey }}"' }], limit: 1, saveAs: 'guest' }, true), position: { x: 960, y: 280 } },
+        { ...n('g15', 'data.firebaseRead', 'Their bookings', { mode: 'query', collection: 'offlineBookings', where: [{ field: 'tenantId', op: '==', value: "\"{{ $json.guest ? $json.guest.path.split('/')[1] : '' }}\"" }], limit: 10, saveAs: 'bookings' }, true), position: { x: 1280, y: 280 } },
+        { ...n('g9', 'comm.sheetsRead', 'System Prompt', { spreadsheet: '', sheet: 'System Prompt', headerRow: 1, filters: [], returnMode: 'first', valueMode: 'formatted' }, true), position: { x: 1600, y: 280 } },
         { ...n('g10', 'ai.chatbot', 'Answer the question', {
           message: "{{ $('Chat message').item.json.body.message }}",
-          instructions: "{{ $json['System Prompt:'] }}\n\n[SYSTEM DATA]\nGuest name: {{ $('Chat message').item.json.body.profile.name }}\nGuest phone: {{ $('Chat message').item.json.body.profile.phone }}\nGuest email: {{ $('Chat message').item.json.body.profile.email }}\nToday's Date: {{ $today }}\nType of question: {{ $('Sort the question').item.json.category }}\nSearch the list “Best list for this question” first.",
+          instructions: "{{ $json['System Prompt:'] }}\n\n[SYSTEM DATA]\nGuest name: {{ $('Chat message').item.json.body.profile.name }}\nGuest phone: {{ $('Chat message').item.json.body.profile.phone }}\nGuest email: {{ $('Chat message').item.json.body.profile.email }}\nToday's Date: {{ $today }}\nType of question: {{ $('Sort the question').item.json.category }}\nSearch the list “Best list for this question” first.\n\n[GUEST'S BOOKINGS FROM WIDEBED PMS]\n{{ $('Their bookings').item.json.bookings.length ? $('Their bookings').item.json.bookings.map(b => b.bookingNo + ': ' + b.unitCode + ' at ' + b.propertyName + ', ' + b.arrival + ' to ' + b.departure + ' (' + b.status + ')').join('\\n') : 'No booking found for this phone number.' }}\nOnly talk about a booking after the guest gives its booking number and it is in this list.",
           conversationId: "{{ $('Chat message').item.json.body.sessionId }}",
           memoryMessages: 40,
           googleConnection: '',
           lookups: [
             { name: 'Best list for this question', spreadsheet: '', sheet: "{{ $('Sort the question').item.json.category === 'Other' ? 'FAQ' : $('Sort the question').item.json.category }}", description: 'The tab that matches the type of question. Search it first.' },
-            { name: 'Booking Details', spreadsheet: '', sheet: 'Booking Details', description: 'Bookings by guest name, phone and booking number. Use it to check who the guest is before sharing booking or unit details.' },
           ],
           maxLookups: 4,
           saveAs: 'output',
-        }, true), position: { x: 1280, y: 280 } },
-        { ...n('g11', 'comm.respondWebhook', 'Send the answer', { bodyType: 'fields', bodyFields: [{ key: 'reply', value: '{{ $json.output }}' }], text: '', statusCode: 200 }), position: { x: 1600, y: 280 } },
+        }, true), position: { x: 1920, y: 280 } },
+        { ...n('g11', 'comm.respondWebhook', 'Send the answer', { bodyType: 'fields', bodyFields: [{ key: 'reply', value: '{{ $json.output }}' }], text: '', statusCode: 200 }), position: { x: 2240, y: 280 } },
         // End chat → forget the conversation.
         { ...n('g12', 'ai.chatForget', 'Forget the conversation', { conversationId: '{{ $json.body.sessionId }}' }), position: { x: 640, y: 520 } },
         { ...n('g13', 'comm.respondWebhook', 'Chat ended', { bodyType: 'fields', bodyFields: [{ key: 'reply', value: 'Chat ended. Thank you for chatting with Widebed!' }], text: '', statusCode: 200 }), position: { x: 960, y: 520 } },
@@ -376,7 +376,8 @@ export const BUILT_IN_TEMPLATES: WorkflowTemplate[] = [
         ['g1', 'main', 'g2'],
         ['g2', 'c_start', 'g3'], ['g3', 'main', 'g4'], ['g4', 'main', 'g5'], ['g5', 'true', 'g6'], ['g5', 'false', 'g7'],
         ['g2', 'c_message', 'g8'], ['g2', 'otherwise', 'g8'],
-        ['g8', 'c_booking', 'g9'], ['g8', 'c_units', 'g9'], ['g8', 'c_maint', 'g9'], ['g8', 'c_team', 'g9'], ['g8', 'c_faq', 'g9'], ['g8', 'otherwise', 'g9'],
+        ['g8', 'c_units', 'g14'], ['g8', 'c_maint', 'g14'], ['g8', 'c_team', 'g14'], ['g8', 'c_faq', 'g14'], ['g8', 'otherwise', 'g14'],
+        ['g14', 'main', 'g15'], ['g15', 'main', 'g9'],
         ['g9', 'main', 'g10'], ['g10', 'main', 'g11'],
         ['g2', 'c_end', 'g12'], ['g12', 'main', 'g13'],
       ].map(([source, sourceHandle, target], i) => ({ id: `c${i + 1}`, source: source!, sourceHandle: sourceHandle!, target: target!, targetHandle: 'main' })),

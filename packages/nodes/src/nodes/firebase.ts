@@ -107,7 +107,7 @@ export const firebaseRead = defineNode({
         label: 'Add to each incoming item as (optional)',
         type: 'string',
         placeholder: 'guest',
-        help: 'Look up for every item and keep the item: the document (in “Query” mode: the first match) goes in this field ({{ $json.guest.email }}). Not found → null, and the item still continues, so an IF step can check “found or not”. Leave empty to output only the documents.',
+        help: 'Look up for every item and keep the item: the document goes in this field ({{ $json.guest.email }}). Query mode: Max documents 1 → the first match or null; more → a list (empty when none). The item always continues, so an IF step can check “found or not”. Leave empty to output only the documents.',
       },
       { key: 'where', label: 'Filters', type: 'firestoreFilters', expressions: true, default: [], showIf: { key: 'mode', equals: ['query'] } },
       { key: 'orderBy', label: 'Order by field', type: 'string', showIf: { key: 'mode', equals: ['query'] } },
@@ -167,15 +167,17 @@ export const firebaseRead = defineNode({
       if (c.mode === 'query' && c.saveAs) {
         // Query lookup: keep the item, add the first matching document (or null).
         const blank = c.where.some((w) => w.value === undefined || w.value === null || (typeof w.value === 'string' && !w.value.trim().replace(/^""$/, '')));
+        // Max documents 1: the first match (or null). More: a list of matches (empty list when none).
+        const many = c.limit > 1;
         const docs = blank
           ? []
           : await fs.query(c.collection, {
               where: c.where.map((w) => ({ ...w, value: coerce(w.value, w.op) })),
               orderBy: c.orderBy ? { field: c.orderBy, direction: c.direction } : undefined,
-              limit: 1,
+              limit: many ? c.limit : 1,
             });
-        const d = docs[0];
-        out.push({ json: { ...items[i]!.json, [c.saveAs]: d ? { id: d.id, ...d.data } : null } });
+        const plain = docs.map((d) => ({ id: d.id, path: d.path, ...d.data }));
+        out.push({ json: { ...items[i]!.json, [c.saveAs]: many ? plain : plain[0] ?? null } });
         continue;
       }
       if (c.mode === 'get' && c.saveAs) {
