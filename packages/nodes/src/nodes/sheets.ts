@@ -138,9 +138,25 @@ interface Table {
 
 async function loadTable(ctx: Ctx, conn: Conn, cfg: { spreadsheet: unknown; sheet: unknown; headerRow: number }, raw = false): Promise<Table> {
   const { id, gid } = parseSpreadsheet(cfg.spreadsheet);
-  const title = await tabTitle(ctx, conn, id, cfg.sheet, gid);
+  let title = await tabTitle(ctx, conn, id, cfg.sheet, gid);
   const render = raw ? 'UNFORMATTED_VALUE' : 'FORMATTED_VALUE';
-  const data = await call(ctx, conn, 'GET', `/${encodeURIComponent(id)}/values/${encodeURIComponent(quoteTab(title))}?majorDimension=ROWS&valueRenderOption=${render}&dateTimeRenderOption=FORMATTED_STRING`);
+  const read = (t: string) => call(ctx, conn, 'GET', `/${encodeURIComponent(id)}/values/${encodeURIComponent(quoteTab(t))}?majorDimension=ROWS&valueRenderOption=${render}&dateTimeRenderOption=FORMATTED_STRING`);
+  let data: any;
+  try {
+    data = await read(title);
+  } catch (err) {
+    if (!(err instanceof NodeError) || err.code !== 'SHEET_TAB') throw err;
+    // Name the missing tab and list the real ones; a difference only in upper/lower case or spaces is fixed automatically.
+    const meta = await call(ctx, conn, 'GET', `/${encodeURIComponent(id)}?fields=sheets.properties(title)`);
+    const tabs: string[] = (meta?.sheets ?? []).map((x: any) => String(x.properties?.title ?? ''));
+    const norm = (v: string) => v.toLowerCase().replace(/\s+/g, ' ').trim();
+    const same = tabs.find((t) => norm(t) === norm(title));
+    if (!same) {
+      throw new NodeError(`There is no tab called “${title}” in this sheet. Its tabs are: ${tabs.map((t) => `“${t}”`).join(', ') || 'none'}.`, { code: 'SHEET_TAB' });
+    }
+    title = same;
+    data = await read(title);
+  }
   const start = rangeStart(String(data?.range ?? ''));
   const grid: unknown[][] = (data?.values ?? []).map((r: unknown[]) => [...Array(start.col).fill(''), ...r]);
   const headerIndex = cfg.headerRow - start.row;

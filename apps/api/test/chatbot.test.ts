@@ -46,6 +46,7 @@ function fakeWeb() {
         const path = decodeURIComponent(u.pathname.replace('/v4/spreadsheets/', ''));
         const [id, rest = ''] = path.split(/\/(.*)/s);
         if (id !== SHEET_ID) return res(404, { error: { message: 'not found' } });
+        if (!rest) return res(200, { sheets: Object.keys(tabs).map((title) => ({ properties: { title } })) });
         const title = /^values\/'((?:[^']|'')*)'/.exec(rest)?.[1]?.replace(/''/g, "'") ?? '';
         sheetReads.push(title);
         const grid = tabs[title];
@@ -618,5 +619,28 @@ describe('Firebase: search a sub-collection of every document (tenants/*/private
     expect(groupPattern('tenants/*/private')).toEqual({ id: 'private' });
     expect(() => groupPattern('*/x/private')).toThrow(/only in place of a document ID/);
     expect(() => groupPattern('tenants/*')).toThrow();
+  });
+});
+
+describe('Google Sheets: a tab name that does not exist', () => {
+  const web = fakeWeb();
+  const svc = (): NodeServices => ({ http: web.http as any, googleToken: async () => ({ accessToken: 'g-token', email: 'support@widebed.com', scopes: [] }) } as any);
+  const def = (sheet: string): WorkflowDefinition => ({
+    schemaVersion: 1, settings: {},
+    nodes: [
+      { id: 't', type: 'trigger.manual', name: 'Start', position: { x: 0, y: 0 }, config: {} },
+      { id: 's', type: 'comm.sheetsRead', name: 'Read', position: { x: 1, y: 0 }, credentialId: 'cred_google', config: { spreadsheet: `https://docs.google.com/spreadsheets/d/${SHEET_ID}/edit`, sheet, headerRow: 1, filters: [], returnMode: 'all', valueMode: 'formatted' } },
+    ],
+    connections: [{ id: 'c', source: 't', sourceHandle: 'main', target: 's', targetHandle: 'main' }],
+  });
+  it('names the missing tab and lists the real ones', async () => {
+    const r = await runWorkflow({ executionId: 'e1', workflowId: 'w', definition: def('FAQ'), registry, services: svc(), triggerItems: [{ json: {} }] });
+    expect(r.status).toBe('failed');
+    expect(JSON.stringify(r)).toContain('There is no tab called “FAQ” in this sheet. Its tabs are: “System Prompt”, “Booking Details”, “Property Units”.');
+  });
+  it('fixes a difference in upper/lower case or spaces by itself', async () => {
+    const r = await runWorkflow({ executionId: 'e2', workflowId: 'w', definition: def('property  units '), registry, services: svc(), triggerItems: [{ json: {} }] });
+    expect(r.status).toBe('success');
+    expect(r.outputs.s!.main!.map((i) => i.json['Unit Number'])).toEqual(['A-12-3']);
   });
 });
