@@ -8,6 +8,7 @@ import { workflowsRouter } from './routes/workflows.js';
 import { customStepsRouter } from './routes/custom-steps.js';
 import { executionsRouter } from './routes/executions.js';
 import { publicWebhookRouter } from './routes/webhooks-public.js';
+import { publicFilesRouter } from './routes/files-public.js';
 import { publicEventsRouter } from './routes/events-public.js';
 import { cronRouter } from './routes/cron-public.js';
 import { credentialsRouter, oauthRouter } from './routes/credentials.js';
@@ -39,6 +40,8 @@ export function createApp(ctx: AppContext) {
   // Same webhooks under /api/hooks: hosting that only forwards /api/* to the API (e.g. some Vercel
   // setups answer /hooks/* themselves with 405) still reaches them. Mounted before the /api auth.
   app.use('/api/hooks', publicWebhookRouter(ctx));
+  // Links of webhook uploads and AI pictures (e.g. the room preview a chat box shows).
+  app.use('/api/files', publicFilesRouter(ctx));
   app.use('/events', publicEventsRouter(ctx));
   app.use('/oauth', oauthRouter(ctx));
   app.use('/cron', cronRouter(ctx));

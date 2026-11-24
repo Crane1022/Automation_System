@@ -3,6 +3,7 @@ import type { Item } from '@widebed/shared';
 import { defineNode, NodeError, requireService, type ChatTurn, type NodeExecutionContext } from '../types.js';
 import { parseAiJson } from './ai.js';
 import { readSheetRows } from './sheets.js';
+import { loadPictures } from './pictures.js';
 
 /**
  * AI Chatbot — answers a message (WhatsApp, live chat, email…) like a staff member would.
@@ -119,6 +120,15 @@ export const aiChatbot = defineNode({
         placeholder: '{{ $json.body.contact_id }}',
         help: 'Something that is the same for every message of one person, e.g. the contact id or phone number. Leave empty to forget every message.',
       },
+      {
+        key: 'pictures',
+        label: 'Pictures to look at (optional)',
+        type: 'string',
+        expressions: true,
+        default: '',
+        placeholder: '{{ $json.body.files }}',
+        help: 'Photos sent with this message, e.g. {{ $json.body.files }} from a Webhook upload (a website chat box). The AI sees JPG, PNG and WEBP pictures, up to 4. Needs a model that can see pictures (e.g. gemini-2.5-flash).',
+      },
       { key: 'memoryMessages', label: 'Messages to remember', type: 'number', default: 20, help: 'How many earlier messages (guest + bot) the AI reads before answering. 0 = none. More costs more AI tokens.' },
       {
         key: 'googleConnection',
@@ -173,6 +183,7 @@ export const aiChatbot = defineNode({
       message: z.string({ required_error: 'Choose the message to answer' }).min(1, 'Choose the message to answer'),
       instructions: z.string().default(''),
       conversationId: z.string().default(''),
+      pictures: z.unknown().optional(),
       memoryMessages: z.coerce.number().int().min(0, 'Use 0 or more').max(100, 'At most 100 messages').default(20),
       googleConnection: z.string().default(''),
       lookups: z
@@ -218,6 +229,8 @@ export const aiChatbot = defineNode({
       const system = [asText(c.instructions).trim(), useLookups ? protocol(lookups) : ''].filter(Boolean).join('\n\n') || undefined;
       const base = [history(past), `New message from the person:\n"""\n${message}\n"""`].filter(Boolean).join('\n\n');
 
+      const { images } = await loadPictures(ctx, c.pictures);
+
       const results: string[] = [];
       const done: { list: string; find: string; found: number }[] = [];
       let reply = '';
@@ -228,7 +241,7 @@ export const aiChatbot = defineNode({
           results.length ? `Search results so far:\n${results.join('\n\n')}` : '',
           useLookups && last ? 'You cannot search any more now. Answer with {"reply": "…"}.' : '',
         ].filter(Boolean).join('\n\n');
-        const res = await ask(aiId, { system, prompt, json: useLookups, maxTokens: 4000, signal: ctx.signal });
+        const res = await ask(aiId, { system, prompt, json: useLookups, maxTokens: 4000, signal: ctx.signal, ...(images.length ? { images } : {}) });
         if (!useLookups) {
           reply = res.text.trim();
           break;
@@ -277,7 +290,7 @@ export const aiChatbot = defineNode({
         const keep = Math.max(2, c.memoryMessages);
         await memory.save(convo, [...past, { role: 'user' as const, text: clip(message, MAX_TURN), at: now }, { role: 'assistant' as const, text: clip(reply, MAX_TURN), at: now }].slice(-keep));
       }
-      out.push({ json: { ...item.json, [c.saveAs]: reply, lookups: done } });
+      out.push({ json: { ...item.json, [c.saveAs]: reply, lookups: done, ...(images.length ? { picturesSeen: images.length } : {}) } });
     }
     return { outputs: { main: out } };
   },

@@ -1,3 +1,4 @@
+import type { FileService } from './file-service.js';
 import type {
   ExecutionEvent,
   ExecutionStatus,
@@ -42,6 +43,8 @@ export interface ExecutionServiceDeps {
   runCode: NodeServices['runCode'];
   timeoutMs: number;
   waitMaxMs: number;
+  /** Webhook uploads and AI pictures. */
+  files?: FileService | null;
   /** Max size of trigger data + draft definition stored on the execution document. */
   maxPayloadBytes?: number;
 }
@@ -314,6 +317,8 @@ export class ExecutionService {
       firestore: credentials ? (id) => credentials.firestoreAccess(id, dept) : undefined,
       googleToken: credentials ? (id) => credentials.googleToken(id, dept) : undefined,
       ai: credentials ? (id, req) => credentials.ai(id, dept, req) : undefined,
+      aiImage: credentials ? (id, req) => credentials.aiImage(id, dept, req) : undefined,
+      files: this.deps.files ? this.deps.files.accessFor(exec.workflowId, exec.executionId) : undefined,
       apiKey: credentials ? (id) => credentials.apiKey(id, dept) : undefined,
       chatMemory: chatMemoryFor(this.deps.repos, exec.workflowId),
       // Team steps: only ones shared with everyone or with this workflow's team.

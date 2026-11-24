@@ -12,6 +12,7 @@ import { gmailRead, gmailSend } from './nodes/gmail.js';
 import { sheetsCreateRow, sheetsRead, sheetsUpdateRow } from './nodes/sheets.js';
 import { aiAgent, aiChat, aiClassify, aiExtract } from './nodes/ai.js';
 import { aiChatbot, aiChatForget } from './nodes/chatbot.js';
+import { aiPicture } from './nodes/pictures.js';
 import { unsupportedNode } from './nodes/unsupported.js';
 import { customStepNode } from './nodes/custom-step.js';
 
@@ -69,7 +70,7 @@ export function createDefaultRegistry(): NodeRegistry {
     // communication
     gmailSend, gmailRead,
     sheetsRead, sheetsCreateRow, sheetsUpdateRow,
-    aiChat, aiChatbot, aiChatForget, aiClassify, aiExtract, aiAgent,
+    aiChat, aiChatbot, aiChatForget, aiPicture, aiClassify, aiExtract, aiAgent,
     // imports
     unsupportedNode,
   ];

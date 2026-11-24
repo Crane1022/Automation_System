@@ -32,6 +32,7 @@ export function createMemoryRepositories(): Repositories {
   const kChunks = new Map<string, any[]>();
   const settings = new Map<string, unknown>();
   const chatMemory = new Map<string, any>();
+  const files = new Map<string, { meta: any; data: Buffer }>();
   const customSteps = new Map<string, CustomStep>();
   const webhooks = new Map<string, WebhookEndpoint>();
   const audit: AuditLog[] = [];
@@ -248,6 +249,14 @@ export function createMemoryRepositories(): Repositories {
     settings: {
       async get(key) { return settings.has(key) ? clone(settings.get(key)) as any : null; },
       async set(key, value) { settings.set(key, clone(value)); },
+    },
+    files: {
+      async save(meta, data) { files.set(meta.fileId, { meta: clone(meta), data: Buffer.from(data) }); },
+      async get(id) {
+        const f = files.get(id);
+        if (!f || f.meta.expiresAt < new Date().toISOString()) return null;
+        return { meta: clone(f.meta), data: Buffer.from(f.data) };
+      },
     },
     chatMemory: {
       async get(id) { return chatMemory.has(id) ? clone(chatMemory.get(id)) : null; },

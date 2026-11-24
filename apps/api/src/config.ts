@@ -82,6 +82,10 @@ const schema = z.object({
   CRON_WAIT_SECONDS: z.coerce.number().int().min(0).max(800).default(240),
 
   WEBHOOK_MAX_BODY_BYTES: z.coerce.number().int().default(1024 * 1024),
+  /** Webhook calls with files (multipart/form-data, e.g. photos from a chat box). Vercel accepts at most 4.5 MB per request. */
+  WEBHOOK_MAX_UPLOAD_BYTES: z.coerce.number().int().default(4 * 1024 * 1024),
+  /** Webhook uploads and AI pictures are kept this many days (their links stop working after). */
+  FILE_RETENTION_DAYS: z.coerce.number().int().min(1).max(90).default(7),
   /**
    * On Vercel without Redis: how long a webhook call stays open while its run finishes (e.g. a
    * chatbot reply). Vercel pauses a function once it has answered, which would leave the run stuck.

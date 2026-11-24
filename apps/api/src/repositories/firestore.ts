@@ -45,6 +45,7 @@ export function createFirestoreRepositories(db: Firestore, opts: { retentionDays
     audit: db.collection('auditLogs'),
     settings: db.collection('systemSettings'),
     chatMemory: db.collection('workflowChatMemory'),
+    files: db.collection('workflowFiles'),
     customSteps: db.collection('customSteps'),
     credentials: db.collection('credentials'),
     secrets: db.collection('credentialSecrets'),
@@ -449,6 +450,30 @@ export function createFirestoreRepositories(db: Firestore, opts: { retentionDays
     settings: {
       async get(key) { const raw = data<any>(await C.settings.doc(key).get()); return raw ? (raw.settingValue as any) : null; },
       async set(key, value) { await C.settings.doc(key).set({ settingValue: value, updatedAt: new Date().toISOString() }); },
+    },
+
+    files: {
+      async save(meta, bytes) {
+        const ref = C.files.doc(meta.fileId);
+        const expire = Timestamp.fromMillis(Date.parse(meta.expiresAt));
+        const PART = 900_000; // under the 1 MB document limit
+        const count = Math.max(1, Math.ceil(bytes.length / PART));
+        const batch = db.batch();
+        for (let i = 0; i < count; i++) {
+          batch.set(ref.collection('workflowFileParts').doc(String(i).padStart(3, '0')), { index: i, data: bytes.subarray(i * PART, (i + 1) * PART), expireAt: expire });
+        }
+        batch.set(ref, { ...meta, parts: count, expireAt: expire });
+        await batch.commit();
+      },
+      async get(id) {
+        const raw = data<any>(await C.files.doc(id).get());
+        if (!raw || String(raw.expiresAt) < new Date().toISOString()) return null;
+        const { expireAt: _e, parts, ...meta } = raw;
+        const snap = await C.files.doc(id).collection('workflowFileParts').orderBy('index', 'asc').get();
+        if (snap.size !== parts) return null; // still being written, or partly deleted
+        const buf = Buffer.concat(snap.docs.map((d) => { const v = d.get('data'); return Buffer.isBuffer(v) ? v : Buffer.from(v?.toUint8Array?.() ?? v ?? []); }));
+        return { meta, data: buf };
+      },
     },
 
     chatMemory: {

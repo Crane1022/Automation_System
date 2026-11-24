@@ -3,8 +3,8 @@ import { cert, getApp, initializeApp } from 'firebase-admin/app';
 import { getFirestore, Timestamp, DocumentReference, GeoPoint, type Firestore } from 'firebase-admin/firestore';
 import type { AiService, AppUser, Credential } from '@widebed/shared';
 import { AI_SERVICE_INFO, collectionAllowed, hasPermission, maskUsername, validHeaderName } from '@widebed/shared';
-import type { AiRequest, AiResponse, ApiKeyAccess, FirestoreAccess, FirestoreDoc } from '@widebed/nodes';
-import { aiComplete, aiStream, defaultAiFetch, defaultAiStreamFetch, listAiModels, type AiFetch, type AiStreamFetch } from './ai-client.js';
+import type { AiImageRequest, AiImageResponse, AiRequest, AiResponse, ApiKeyAccess, FirestoreAccess, FirestoreDoc } from '@widebed/nodes';
+import { aiComplete, aiGenerateImage, aiStream, defaultAiFetch, defaultAiStreamFetch, listAiModels, type AiFetch, type AiStreamFetch } from './ai-client.js';
 import { NodeError, buildMime } from '@widebed/nodes';
 import type { Repositories } from '../repositories/types.js';
 import { SecretBox, hashToken, randomToken } from '../lib/crypto.js';
@@ -14,7 +14,7 @@ import { badRequest, forbidden, notFound } from '../lib/http-error.js';
 /** Collections of the automation platform itself — never reachable from Firebase nodes. */
 const PLATFORM_COLLECTIONS = new Set([
   'users', 'workflows', 'workflowVersions', 'workflowExecutions', 'workflowFolders', 'workflowTemplates', 'webhookEndpoints',
-  'credentials', 'credentialSecrets', 'auditLogs', 'systemSettings', 'workflowChatMemory',
+  'credentials', 'credentialSecrets', 'auditLogs', 'systemSettings', 'workflowChatMemory', 'workflowFiles',
   'assistantChats', 'assistantMemories', 'aiAgents', 'aiTasks', 'aiSchedules', 'aiResponsibilities', 'aiNotifications',
   'aiApprovals', 'aiProjects', 'aiKnowledge', 'aiUsage',
 ]);
@@ -194,6 +194,15 @@ export class CredentialService {
     const res = await aiComplete(cfg, rest, this.aiFetch, signal);
     opts.onText?.(res.text);
     return res;
+  }
+
+  /** Makes a picture with a Gemini AI connection (AI Picture step). */
+  async aiImage(id: string, department: string | null, req: AiImageRequest): Promise<AiImageResponse> {
+    const c = await this.loadForRun(id, 'ai_provider', department);
+    const { apiKey } = await this.readSecret(id);
+    const { signal, ...rest } = req;
+    const service = c.details.aiService ?? 'openai';
+    return aiGenerateImage({ service, model: c.details.model || AI_SERVICE_INFO[service].defaultModel, apiKey }, rest, this.aiFetch, signal);
   }
 
   /** Models the key of this AI connection can use (asked from the AI service). */

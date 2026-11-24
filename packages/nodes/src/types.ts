@@ -53,6 +53,37 @@ export interface AgentRunResult {
   files: { fileId: string; name: string; size: number }[];
 }
 
+/** A file the platform keeps for a while (e.g. a photo sent to a webhook, or a picture made by AI). */
+export interface FileRef {
+  fileId: string;
+  name: string;
+  mimeType: string;
+  size: number;
+  /** Public link that shows the file (unguessable, expires with the file). */
+  url: string;
+}
+
+/** Files kept by the platform. Nodes save and read them only through this. */
+export interface FileStoreAccess {
+  save(data: Uint8Array, meta: { name: string; mimeType: string }): Promise<FileRef>;
+  load(fileId: string): Promise<{ data: Uint8Array; name: string; mimeType: string } | null>;
+}
+
+/** A request to make a picture with AI (Gemini), optionally from other pictures. */
+export interface AiImageRequest {
+  prompt: string;
+  images?: AiImage[];
+  signal?: AbortSignal;
+}
+export interface AiImageResponse {
+  /** base64, no data: prefix */
+  data: string;
+  mimeType: string;
+  /** Any words the AI wrote next to the picture. */
+  text: string;
+  model: string;
+}
+
 /** One message of a remembered chatbot conversation. */
 export interface ChatTurn {
   role: 'user' | 'assistant';
@@ -84,6 +115,10 @@ export interface NodeServices {
   respond?: (res: { status: number; body: unknown; contentType: 'json' | 'text' }) => Promise<void>;
   /** A step saved by the team ("My team's steps"); null when missing or not shared with this workflow's team. */
   customStep?: (stepId: string) => Promise<import('@widebed/shared').CustomStep | null>;
+  /** Makes a picture with an AI connection (Gemini only). */
+  aiImage?: (credentialId: string, req: AiImageRequest) => Promise<AiImageResponse>;
+  /** Files of this workflow: webhook uploads and pictures made by AI. */
+  files?: FileStoreAccess;
   /** Conversation memory for chatbot nodes (scoped to this workflow by the platform). */
   chatMemory?: ChatMemoryAccess;
   /** Firestore of an outside project, restricted to the credential's allowed collections. */

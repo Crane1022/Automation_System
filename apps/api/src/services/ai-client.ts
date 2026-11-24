@@ -1,5 +1,5 @@
 import type { AiService } from '@widebed/shared';
-import { NodeError, type AiRequest, type AiResponse } from '@widebed/nodes';
+import { NodeError, type AiImageRequest, type AiImageResponse, type AiRequest, type AiResponse } from '@widebed/nodes';
 
 /**
  * One small client for the three AI services. Each speaks a different HTTP API;
@@ -135,6 +135,51 @@ export async function aiComplete(
   }
 }
 
+
+/* ================================================================ pictures */
+
+/** Gemini model that makes pictures, used when the AI connection's own model cannot. */
+export const DEFAULT_IMAGE_MODEL = 'gemini-2.5-flash-image';
+const IMAGE_TIMEOUT_MS = 100_000;
+
+/**
+ * Makes one picture with Gemini (optionally starting from photos). Only Gemini connections can do this.
+ * The connection's model is used when it is an image model, otherwise gemini-2.5-flash-image.
+ */
+export async function aiGenerateImage(cfg: AiConfig, req: AiImageRequest, fetchJson: AiFetch = defaultAiFetch, signal?: AbortSignal): Promise<AiImageResponse> {
+  if (cfg.service !== 'gemini') {
+    throw new NodeError('AI Picture needs a Google Gemini AI connection. Add one on the Credentials page (AI service → Google Gemini) and choose it on this step.', { code: 'AI_IMAGE_SERVICE' });
+  }
+  const model = /image/i.test(cfg.model) ? cfg.model : DEFAULT_IMAGE_MODEL;
+  const timeout = AbortSignal.timeout(IMAGE_TIMEOUT_MS);
+  const sig = signal ? AbortSignal.any([signal, timeout]) : timeout;
+  let res: { status: number; json: any };
+  try {
+    res = await fetchJson(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`, {
+      method: 'POST',
+      headers: { 'x-goog-api-key': cfg.apiKey, 'content-type': 'application/json' },
+      body: JSON.stringify({
+        contents: [userTurn('gemini', req.prompt, req.images)],
+        generationConfig: { responseModalities: ['TEXT', 'IMAGE'] },
+      }),
+      signal: sig,
+    });
+  } catch (err) {
+    if (signal?.aborted) throw err;
+    if (timeout.aborted) throw new NodeError('Making the picture took too long (100 s). Try again.', { code: 'AI_TIMEOUT', retryable: true });
+    throw new NodeError(`Could not reach the AI service: ${(err as Error).message}`, { code: 'AI_NETWORK', retryable: true });
+  }
+  if (res.status >= 400) throw friendlyError('gemini', model, res.status, res.json, !!req.images?.length);
+  const cand = res.json?.candidates?.[0];
+  const parts: any[] = cand?.content?.parts ?? [];
+  const pic = parts.map((p) => p?.inlineData ?? p?.inline_data).find((d) => d && typeof d.data === 'string' && /^image\//.test(d.mimeType ?? d.mime_type ?? ''));
+  const text = parts.filter((p) => typeof p?.text === 'string' && !p.thought).map((p) => p.text).join('').trim();
+  if (!pic) {
+    const why = cand?.finishReason && cand.finishReason !== 'STOP' ? ` (${cand.finishReason})` : res.json?.promptFeedback?.blockReason ? ` (${res.json.promptFeedback.blockReason})` : '';
+    throw new NodeError(`The AI did not make a picture${why}.${text ? ` It said: “${text.slice(0, 300)}”` : ''}`, { code: 'AI_NO_IMAGE', retryable: !why });
+  }
+  return { data: pic.data, mimeType: String(pic.mimeType ?? pic.mime_type), text, model: String(res.json?.modelVersion ?? model) };
+}
 
 /* ================================================================ streaming */
 

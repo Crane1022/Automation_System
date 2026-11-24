@@ -10,6 +10,7 @@ import { BullExecutionQueue, InProcessQueue } from './services/queue.js';
 import { BullScheduler, InProcessScheduler } from './services/scheduler.js';
 import { ExecutionService } from './services/execution-service.js';
 import { WebhookService } from './services/webhook-service.js';
+import { FileService } from './services/file-service.js';
 import { CredentialService, type CredentialServiceOptions } from './services/credential-service.js';
 import { createCodeSandbox } from './services/code-sandbox.js';
 import { createAuditLogger } from './services/audit.js';
@@ -65,8 +66,10 @@ export function buildContext(config: Config, repos: Repositories, verifier: Toke
     google: config.GOOGLE_OAUTH_CLIENT_ID && config.GOOGLE_OAUTH_CLIENT_SECRET ? { clientId: config.GOOGLE_OAUTH_CLIENT_ID, clientSecret: config.GOOGLE_OAUTH_CLIENT_SECRET } : undefined,
     ...opts.credentialOverrides,
   });
+  const files = new FileService(repos, { publicBaseUrl: config.PUBLIC_BASE_URL, retentionDays: config.FILE_RETENTION_DAYS });
   const executions = new ExecutionService({
     repos,
+    files,
     registry,
     bus,
     queue,
@@ -118,6 +121,7 @@ export function buildContext(config: Config, repos: Repositories, verifier: Toke
     system,
     browser,
     webhooks: new WebhookService(repos, registry, box, config.PUBLIC_BASE_URL),
+    files,
     credentials,
     scheduler,
     bus,
@@ -131,6 +135,7 @@ export function buildContext(config: Config, repos: Repositories, verifier: Toke
       rateLimitPerMinute: config.RATE_LIMIT_PER_MINUTE,
       webhookRateLimitPerMinute: config.WEBHOOK_RATE_LIMIT_PER_MINUTE,
       webhookMaxBodyBytes: config.WEBHOOK_MAX_BODY_BYTES,
+      webhookMaxUploadBytes: config.WEBHOOK_MAX_UPLOAD_BYTES,
       trustProxy: config.TRUST_PROXY,
       nodeEnv: config.NODE_ENV,
       publicBaseUrl: config.PUBLIC_BASE_URL,

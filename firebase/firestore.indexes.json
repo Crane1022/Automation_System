@@ -410,6 +410,23 @@
       "collectionGroup": "workflowChatMemory",
       "fieldPath": "turns",
       "indexes": []
+    },
+    {
+      "collectionGroup": "workflowFiles",
+      "fieldPath": "expireAt",
+      "ttl": true,
+      "indexes": []
+    },
+    {
+      "collectionGroup": "workflowFileParts",
+      "fieldPath": "expireAt",
+      "ttl": true,
+      "indexes": []
+    },
+    {
+      "collectionGroup": "workflowFileParts",
+      "fieldPath": "data",
+      "indexes": []
     }
   ]
 }

@@ -5,6 +5,8 @@ import type { AppContext } from '../context.js';
 import { ah } from '../middleware/errors.js';
 import { rateLimit } from '../middleware/rate-limit.js';
 import { verifyHmac } from '../lib/crypto.js';
+import { multipartBoundary, parseMultipart, sniffFileType } from '../lib/multipart.js';
+import { FILE_TYPES } from '../services/file-service.js';
 
 /** Headers that are never forwarded into workflow data. */
 const DROP_HEADERS = /^(authorization|cookie|proxy-authorization|x-widebed-signature|x-forwarded-.*|x-real-ip|forwarded)$/i;
@@ -70,7 +72,8 @@ export function publicWebhookRouter(ctx: AppContext) {
     '/:token',
     rateLimit({ windowMs: 60_000, max: ctx.config.webhookRateLimitPerMinute, key: (req) => `${req.ip}:${req.params.token?.slice(0, 8)}` }),
     // Keep the raw bytes: the HMAC must be computed on exactly what was sent.
-    express.raw({ type: () => true, limit: ctx.config.webhookMaxBodyBytes }),
+    // Calls with files (multipart) may be bigger; the others are checked against the normal limit below.
+    express.raw({ type: () => true, limit: Math.max(ctx.config.webhookMaxBodyBytes, ctx.config.webhookMaxUploadBytes) }),
     ah(async (req, res) => {
       const found = await endpointNode(req.params.token);
       if (!found) {
@@ -100,7 +103,34 @@ export function publicWebhookRouter(ctx: AppContext) {
       }
 
       let body: unknown = null;
-      const text = raw.toString('utf8');
+      const boundary = multipartBoundary(req.header('content-type'));
+      if (!boundary && raw.length > ctx.config.webhookMaxBodyBytes) {
+        return res.status(413).json({ error: `The request is larger than ${Math.round(ctx.config.webhookMaxBodyBytes / 1024)} KB` });
+      }
+      const text = boundary ? '' : raw.toString('utf8');
+      if (boundary) {
+        // Form data with files (e.g. a website chat box with photos): text fields become the body,
+        // and each JPG / PNG / WEBP / PDF is kept for a few days and listed in body.files.
+        let form;
+        try {
+          form = parseMultipart(raw, boundary);
+        } catch (err) {
+          return res.status(400).json({ error: `The form data could not be read: ${(err as Error).message}` });
+        }
+        const files: Record<string, unknown>[] = [];
+        const skipped: string[] = [];
+        for (const f of form.files.slice(0, 10)) {
+          const type = sniffFileType(f.data);
+          if (!f.data.length) continue;
+          if (!type || !FILE_TYPES.includes(type)) {
+            skipped.push(`${f.filename} (only JPG, PNG, WEBP and PDF files are kept)`);
+            continue;
+          }
+          const ref = await ctx.files.save({ workflowId: wf.workflowId, executionId: null }, f.data, { name: f.filename, mimeType: type });
+          files.push({ field: f.field, ...ref });
+        }
+        body = { ...form.fields, files, ...(skipped.length ? { skippedFiles: skipped } : {}) };
+      }
       if (text) {
         const type = req.header('content-type') ?? '';
         if (type.includes('json')) {

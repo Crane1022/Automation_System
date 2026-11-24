@@ -2,6 +2,7 @@ import type { NodeRegistry } from '@widebed/nodes';
 import type { Repositories } from './repositories/types.js';
 import type { ExecutionService } from './services/execution-service.js';
 import type { WebhookService } from './services/webhook-service.js';
+import type { FileService } from './services/file-service.js';
 import type { EventBus } from './services/event-bus.js';
 import type { AuditFn } from './services/audit.js';
 import type { CredentialService } from './services/credential-service.js';
@@ -23,6 +24,7 @@ export interface AppContext {
   registry: NodeRegistry;
   executions: ExecutionService;
   webhooks: WebhookService;
+  files: FileService;
   credentials: CredentialService;
   assistant: AssistantService;
   system: SystemService;
@@ -44,6 +46,7 @@ export interface AppContext {
     rateLimitPerMinute: number;
     webhookRateLimitPerMinute: number;
     webhookMaxBodyBytes: number;
+    webhookMaxUploadBytes: number;
     trustProxy: boolean;
     nodeEnv: string;
     publicBaseUrl: string;

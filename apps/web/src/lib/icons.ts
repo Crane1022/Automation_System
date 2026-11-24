@@ -30,6 +30,7 @@ import {
   Reply,
   Package,
   MessageSquareX,
+  Image,
 } from '@lucide/vue';
 import type { Component } from 'vue';
 
@@ -65,6 +66,7 @@ const map: Record<string, Component> = {
   reply: Reply,
   package: Package,
   'message-square-x': MessageSquareX,
+  image: Image,
 };
 
 export const iconFor = (name: string): Component => map[name] ?? Box;

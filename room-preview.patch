@@ -1,0 +1,1204 @@
+diff --git a/apps/api/src/bootstrap.ts b/apps/api/src/bootstrap.ts
+index a01b026..f5e0b76 100644
+--- a/apps/api/src/bootstrap.ts
++++ b/apps/api/src/bootstrap.ts
+@@ -10,6 +10,7 @@ import { BullExecutionQueue, InProcessQueue } from './services/queue.js';
+ import { BullScheduler, InProcessScheduler } from './services/scheduler.js';
+ import { ExecutionService } from './services/execution-service.js';
+ import { WebhookService } from './services/webhook-service.js';
++import { FileService } from './services/file-service.js';
+ import { CredentialService, type CredentialServiceOptions } from './services/credential-service.js';
+ import { createCodeSandbox } from './services/code-sandbox.js';
+ import { createAuditLogger } from './services/audit.js';
+@@ -65,8 +66,10 @@ export function buildContext(config: Config, repos: Repositories, verifier: Toke
+     google: config.GOOGLE_OAUTH_CLIENT_ID && config.GOOGLE_OAUTH_CLIENT_SECRET ? { clientId: config.GOOGLE_OAUTH_CLIENT_ID, clientSecret: config.GOOGLE_OAUTH_CLIENT_SECRET } : undefined,
+     ...opts.credentialOverrides,
+   });
++  const files = new FileService(repos, { publicBaseUrl: config.PUBLIC_BASE_URL, retentionDays: config.FILE_RETENTION_DAYS });
+   const executions = new ExecutionService({
+     repos,
++    files,
+     registry,
+     bus,
+     queue,
+@@ -118,6 +121,7 @@ export function buildContext(config: Config, repos: Repositories, verifier: Toke
+     system,
+     browser,
+     webhooks: new WebhookService(repos, registry, box, config.PUBLIC_BASE_URL),
++    files,
+     credentials,
+     scheduler,
+     bus,
+@@ -131,6 +135,7 @@ export function buildContext(config: Config, repos: Repositories, verifier: Toke
+       rateLimitPerMinute: config.RATE_LIMIT_PER_MINUTE,
+       webhookRateLimitPerMinute: config.WEBHOOK_RATE_LIMIT_PER_MINUTE,
+       webhookMaxBodyBytes: config.WEBHOOK_MAX_BODY_BYTES,
++      webhookMaxUploadBytes: config.WEBHOOK_MAX_UPLOAD_BYTES,
+       trustProxy: config.TRUST_PROXY,
+       nodeEnv: config.NODE_ENV,
+       publicBaseUrl: config.PUBLIC_BASE_URL,
+diff --git a/apps/api/src/config.ts b/apps/api/src/config.ts
+index 3fa0358..8b2ce76 100644
+--- a/apps/api/src/config.ts
++++ b/apps/api/src/config.ts
+@@ -82,6 +82,10 @@ const schema = z.object({
+   CRON_WAIT_SECONDS: z.coerce.number().int().min(0).max(800).default(240),
+ 
+   WEBHOOK_MAX_BODY_BYTES: z.coerce.number().int().default(1024 * 1024),
++  /** Webhook calls with files (multipart/form-data, e.g. photos from a chat box). Vercel accepts at most 4.5 MB per request. */
++  WEBHOOK_MAX_UPLOAD_BYTES: z.coerce.number().int().default(4 * 1024 * 1024),
++  /** Webhook uploads and AI pictures are kept this many days (their links stop working after). */
++  FILE_RETENTION_DAYS: z.coerce.number().int().min(1).max(90).default(7),
+   /**
+    * On Vercel without Redis: how long a webhook call stays open while its run finishes (e.g. a
+    * chatbot reply). Vercel pauses a function once it has answered, which would leave the run stuck.
+diff --git a/apps/api/src/context.ts b/apps/api/src/context.ts
+index 004eba0..aba6d4b 100644
+--- a/apps/api/src/context.ts
++++ b/apps/api/src/context.ts
+@@ -2,6 +2,7 @@ import type { NodeRegistry } from '@widebed/nodes';
+ import type { Repositories } from './repositories/types.js';
+ import type { ExecutionService } from './services/execution-service.js';
+ import type { WebhookService } from './services/webhook-service.js';
++import type { FileService } from './services/file-service.js';
+ import type { EventBus } from './services/event-bus.js';
+ import type { AuditFn } from './services/audit.js';
+ import type { CredentialService } from './services/credential-service.js';
+@@ -23,6 +24,7 @@ export interface AppContext {
+   registry: NodeRegistry;
+   executions: ExecutionService;
+   webhooks: WebhookService;
++  files: FileService;
+   credentials: CredentialService;
+   assistant: AssistantService;
+   system: SystemService;
+@@ -44,6 +46,7 @@ export interface AppContext {
+     rateLimitPerMinute: number;
+     webhookRateLimitPerMinute: number;
+     webhookMaxBodyBytes: number;
++    webhookMaxUploadBytes: number;
+     trustProxy: boolean;
+     nodeEnv: string;
+     publicBaseUrl: string;
+diff --git a/apps/api/src/create-app.ts b/apps/api/src/create-app.ts
+index 0dd77c0..8915f53 100644
+--- a/apps/api/src/create-app.ts
++++ b/apps/api/src/create-app.ts
+@@ -8,6 +8,7 @@ import { workflowsRouter } from './routes/workflows.js';
+ import { customStepsRouter } from './routes/custom-steps.js';
+ import { executionsRouter } from './routes/executions.js';
+ import { publicWebhookRouter } from './routes/webhooks-public.js';
++import { publicFilesRouter } from './routes/files-public.js';
+ import { publicEventsRouter } from './routes/events-public.js';
+ import { cronRouter } from './routes/cron-public.js';
+ import { credentialsRouter, oauthRouter } from './routes/credentials.js';
+@@ -39,6 +40,8 @@ export function createApp(ctx: AppContext) {
+   // Same webhooks under /api/hooks: hosting that only forwards /api/* to the API (e.g. some Vercel
+   // setups answer /hooks/* themselves with 405) still reaches them. Mounted before the /api auth.
+   app.use('/api/hooks', publicWebhookRouter(ctx));
++  // Links of webhook uploads and AI pictures (e.g. the room preview a chat box shows).
++  app.use('/api/files', publicFilesRouter(ctx));
+   app.use('/events', publicEventsRouter(ctx));
+   app.use('/oauth', oauthRouter(ctx));
+   app.use('/cron', cronRouter(ctx));
+diff --git a/apps/api/src/lib/multipart.ts b/apps/api/src/lib/multipart.ts
+new file mode 100644
+index 0000000..58ba290
+--- /dev/null
++++ b/apps/api/src/lib/multipart.ts
+@@ -0,0 +1,73 @@
++/**
++ * Small multipart/form-data reader for webhook calls (e.g. a website chat box that attaches photos).
++ * Works on the raw bytes, so file contents stay exactly as sent.
++ */
++
++export interface MultipartFile {
++  field: string;
++  filename: string;
++  mimeType: string;
++  data: Buffer;
++}
++export interface MultipartBody {
++  fields: Record<string, string>;
++  files: MultipartFile[];
++}
++
++export function multipartBoundary(contentType: string | undefined): string | null {
++  const ct = String(contentType ?? '');
++  if (!/^\s*multipart\/form-data/i.test(ct)) return null;
++  const m = /boundary=(?:"([^"]+)"|([^;\s]+))/i.exec(ct);
++  const b = m?.[1] ?? m?.[2] ?? '';
++  return b && b.length <= 200 ? b : null;
++}
++
++const MAX_PARTS = 50;
++const MAX_FIELD_BYTES = 256 * 1024;
++
++/** Splits the body into text fields and files. Throws on a body that is not valid multipart. */
++export function parseMultipart(raw: Buffer, boundary: string): MultipartBody {
++  const out: MultipartBody = { fields: {}, files: [] };
++  const delim = Buffer.from(`--${boundary}`);
++  let pos = raw.indexOf(delim);
++  if (pos < 0) throw new Error('The form data has no parts');
++  let parts = 0;
++  for (;;) {
++    pos += delim.length;
++    // "--" right after the boundary marks the end.
++    if (raw[pos] === 0x2d && raw[pos + 1] === 0x2d) break;
++    if (raw[pos] === 0x0d && raw[pos + 1] === 0x0a) pos += 2;
++    const next = raw.indexOf(Buffer.concat([Buffer.from('\r\n'), delim]), pos);
++    if (next < 0) throw new Error('The form data is cut off');
++    const part = raw.subarray(pos, next);
++    pos = next + 2;
++    if (++parts > MAX_PARTS) throw new Error(`The form data has more than ${MAX_PARTS} parts`);
++
++    const headEnd = part.indexOf('\r\n\r\n');
++    if (headEnd < 0) continue;
++    const head = part.subarray(0, headEnd).toString('utf8');
++    const body = part.subarray(headEnd + 4);
++    const disp = /^content-disposition:(.*)$/im.exec(head)?.[1] ?? '';
++    const name = /\bname="([^"]*)"/i.exec(disp)?.[1];
++    if (name === undefined) continue;
++    const filename = /\bfilename="([^"]*)"/i.exec(disp)?.[1];
++    if (filename !== undefined) {
++      const type = /^content-type:\s*([^\r\n;]+)/im.exec(head)?.[1]?.trim().toLowerCase() ?? 'application/octet-stream';
++      out.files.push({ field: name, filename: filename.replace(/[\\/]/g, '_').slice(0, 200) || 'file', mimeType: type, data: Buffer.from(body) });
++    } else if (body.length <= MAX_FIELD_BYTES) {
++      out.fields[name] = body.toString('utf8');
++    } else {
++      throw new Error(`The form field “${name}” is too long`);
++    }
++  }
++  return out;
++}
++
++/** The real type of a file, from its first bytes. Only these types are kept. */
++export function sniffFileType(data: Buffer): 'image/jpeg' | 'image/png' | 'image/webp' | 'application/pdf' | null {
++  if (data.length >= 3 && data[0] === 0xff && data[1] === 0xd8 && data[2] === 0xff) return 'image/jpeg';
++  if (data.length >= 8 && data.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) return 'image/png';
++  if (data.length >= 12 && data.subarray(0, 4).toString('latin1') === 'RIFF' && data.subarray(8, 12).toString('latin1') === 'WEBP') return 'image/webp';
++  if (data.length >= 5 && data.subarray(0, 5).toString('latin1') === '%PDF-') return 'application/pdf';
++  return null;
++}
+diff --git a/apps/api/src/repositories/firestore.ts b/apps/api/src/repositories/firestore.ts
+index b31638c..6005f27 100644
+--- a/apps/api/src/repositories/firestore.ts
++++ b/apps/api/src/repositories/firestore.ts
+@@ -45,6 +45,7 @@ export function createFirestoreRepositories(db: Firestore, opts: { retentionDays
+     audit: db.collection('auditLogs'),
+     settings: db.collection('systemSettings'),
+     chatMemory: db.collection('workflowChatMemory'),
++    files: db.collection('workflowFiles'),
+     customSteps: db.collection('customSteps'),
+     credentials: db.collection('credentials'),
+     secrets: db.collection('credentialSecrets'),
+@@ -451,6 +452,30 @@ export function createFirestoreRepositories(db: Firestore, opts: { retentionDays
+       async set(key, value) { await C.settings.doc(key).set({ settingValue: value, updatedAt: new Date().toISOString() }); },
+     },
+ 
++    files: {
++      async save(meta, bytes) {
++        const ref = C.files.doc(meta.fileId);
++        const expire = Timestamp.fromMillis(Date.parse(meta.expiresAt));
++        const PART = 900_000; // under the 1 MB document limit
++        const count = Math.max(1, Math.ceil(bytes.length / PART));
++        const batch = db.batch();
++        for (let i = 0; i < count; i++) {
++          batch.set(ref.collection('workflowFileParts').doc(String(i).padStart(3, '0')), { index: i, data: bytes.subarray(i * PART, (i + 1) * PART), expireAt: expire });
++        }
++        batch.set(ref, { ...meta, parts: count, expireAt: expire });
++        await batch.commit();
++      },
++      async get(id) {
++        const raw = data<any>(await C.files.doc(id).get());
++        if (!raw || String(raw.expiresAt) < new Date().toISOString()) return null;
++        const { expireAt: _e, parts, ...meta } = raw;
++        const snap = await C.files.doc(id).collection('workflowFileParts').orderBy('index', 'asc').get();
++        if (snap.size !== parts) return null; // still being written, or partly deleted
++        const buf = Buffer.concat(snap.docs.map((d) => { const v = d.get('data'); return Buffer.isBuffer(v) ? v : Buffer.from(v?.toUint8Array?.() ?? v ?? []); }));
++        return { meta, data: buf };
++      },
++    },
++
+     chatMemory: {
+       async get(id) { const raw = data<any>(await C.chatMemory.doc(id).get()); if (!raw) return null; const { expireAt: _e, ...rest } = raw; return rest; },
+       async set(id, value) { await C.chatMemory.doc(id).set({ ...value, expireAt: Timestamp.fromMillis(Date.now() + 90 * 86400_000) }); },
+diff --git a/apps/api/src/repositories/memory.ts b/apps/api/src/repositories/memory.ts
+index 01b029b..002cddb 100644
+--- a/apps/api/src/repositories/memory.ts
++++ b/apps/api/src/repositories/memory.ts
+@@ -32,6 +32,7 @@ export function createMemoryRepositories(): Repositories {
+   const kChunks = new Map<string, any[]>();
+   const settings = new Map<string, unknown>();
+   const chatMemory = new Map<string, any>();
++  const files = new Map<string, { meta: any; data: Buffer }>();
+   const customSteps = new Map<string, CustomStep>();
+   const webhooks = new Map<string, WebhookEndpoint>();
+   const audit: AuditLog[] = [];
+@@ -249,6 +250,14 @@ export function createMemoryRepositories(): Repositories {
+       async get(key) { return settings.has(key) ? clone(settings.get(key)) as any : null; },
+       async set(key, value) { settings.set(key, clone(value)); },
+     },
++    files: {
++      async save(meta, data) { files.set(meta.fileId, { meta: clone(meta), data: Buffer.from(data) }); },
++      async get(id) {
++        const f = files.get(id);
++        if (!f || f.meta.expiresAt < new Date().toISOString()) return null;
++        return { meta: clone(f.meta), data: Buffer.from(f.data) };
++      },
++    },
+     chatMemory: {
+       async get(id) { return chatMemory.has(id) ? clone(chatMemory.get(id)) : null; },
+       async set(id, v) { chatMemory.set(id, clone(v)); },
+diff --git a/apps/api/src/repositories/types.ts b/apps/api/src/repositories/types.ts
+index 3ad44a1..20a3ae1 100644
+--- a/apps/api/src/repositories/types.ts
++++ b/apps/api/src/repositories/types.ts
+@@ -275,6 +275,26 @@ export interface ChatMemoryRepo {
+   delete(id: string): Promise<void>;
+ }
+ 
++/**
++ * Files kept for a few days: photos sent to a webhook, pictures made by the AI Picture step.
++ * workflowFiles/{fileId} holds the details; the bytes are in workflowFiles/{fileId}/workflowFileParts/{n}
++ * (Firestore documents hold at most 1 MB). Deleted by a TTL policy on expireAt.
++ */
++export interface StoredFile {
++  fileId: string;
++  workflowId: string;
++  executionId: string | null;
++  name: string;
++  mimeType: string;
++  size: number;
++  createdAt: string;
++  expiresAt: string;
++}
++export interface FilesRepo {
++  save(meta: StoredFile, data: Buffer): Promise<void>;
++  get(fileId: string): Promise<{ meta: StoredFile; data: Buffer } | null>;
++}
++
+ /** Saved team steps ("My team's steps"). Few per company, so list() returns all of them. */
+ export interface CustomStepsRepo {
+   list(): Promise<CustomStep[]>;
+@@ -336,6 +356,7 @@ export interface Repositories {
+   usage: UsageRepo;
+   settings: SettingsRepo;
+   chatMemory: ChatMemoryRepo;
++  files: FilesRepo;
+   customSteps: CustomStepsRepo;
+   webhooks: WebhooksRepo;
+   audit: AuditRepo;
+diff --git a/apps/api/src/routes/files-public.ts b/apps/api/src/routes/files-public.ts
+new file mode 100644
+index 0000000..345f7db
+--- /dev/null
++++ b/apps/api/src/routes/files-public.ts
+@@ -0,0 +1,32 @@
++import { Router } from 'express';
++import type { AppContext } from '../context.js';
++import { ah } from '../middleware/errors.js';
++import { rateLimit } from '../middleware/rate-limit.js';
++
++/**
++ * Public links of workflow files: GET /api/files/<fileId>
++ * (photos sent to a webhook, pictures made by the AI Picture step).
++ * The id is unguessable and the file expires after FILE_RETENTION_DAYS, so no login is needed.
++ * Only pictures and PDFs are ever stored, and they are sent with nosniff so a browser never runs them.
++ */
++export function publicFilesRouter(ctx: AppContext) {
++  const r = Router();
++  r.get(
++    '/:fileId',
++    rateLimit({ windowMs: 60_000, max: Math.max(60, ctx.config.webhookRateLimitPerMinute * 2), key: (req) => `file:${req.ip}` }),
++    ah(async (req, res) => {
++      const f = await ctx.files.read(String(req.params.fileId));
++      if (!f) return res.status(404).json({ error: 'This file does not exist or has expired.' });
++      res.setHeader('Content-Type', f.meta.mimeType);
++      res.setHeader('Content-Length', String(f.data.length));
++      res.setHeader('X-Content-Type-Options', 'nosniff');
++      res.setHeader('Content-Security-Policy', "default-src 'none'; img-src 'self'; style-src 'unsafe-inline'; sandbox");
++      res.setHeader('Content-Disposition', `inline; filename="${f.meta.name.replace(/"/g, '')}"`);
++      res.setHeader('Cache-Control', 'private, max-age=86400');
++      res.setHeader('Access-Control-Allow-Origin', '*');
++      res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
++      res.status(200).end(f.data);
++    }),
++  );
++  return r;
++}
+diff --git a/apps/api/src/routes/webhooks-public.ts b/apps/api/src/routes/webhooks-public.ts
+index d22b212..e8f79af 100644
+--- a/apps/api/src/routes/webhooks-public.ts
++++ b/apps/api/src/routes/webhooks-public.ts
+@@ -5,6 +5,8 @@ import type { AppContext } from '../context.js';
+ import { ah } from '../middleware/errors.js';
+ import { rateLimit } from '../middleware/rate-limit.js';
+ import { verifyHmac } from '../lib/crypto.js';
++import { multipartBoundary, parseMultipart, sniffFileType } from '../lib/multipart.js';
++import { FILE_TYPES } from '../services/file-service.js';
+ 
+ /** Headers that are never forwarded into workflow data. */
+ const DROP_HEADERS = /^(authorization|cookie|proxy-authorization|x-widebed-signature|x-forwarded-.*|x-real-ip|forwarded)$/i;
+@@ -70,7 +72,8 @@ export function publicWebhookRouter(ctx: AppContext) {
+     '/:token',
+     rateLimit({ windowMs: 60_000, max: ctx.config.webhookRateLimitPerMinute, key: (req) => `${req.ip}:${req.params.token?.slice(0, 8)}` }),
+     // Keep the raw bytes: the HMAC must be computed on exactly what was sent.
+-    express.raw({ type: () => true, limit: ctx.config.webhookMaxBodyBytes }),
++    // Calls with files (multipart) may be bigger; the others are checked against the normal limit below.
++    express.raw({ type: () => true, limit: Math.max(ctx.config.webhookMaxBodyBytes, ctx.config.webhookMaxUploadBytes) }),
+     ah(async (req, res) => {
+       const found = await endpointNode(req.params.token);
+       if (!found) {
+@@ -100,7 +103,34 @@ export function publicWebhookRouter(ctx: AppContext) {
+       }
+ 
+       let body: unknown = null;
+-      const text = raw.toString('utf8');
++      const boundary = multipartBoundary(req.header('content-type'));
++      if (!boundary && raw.length > ctx.config.webhookMaxBodyBytes) {
++        return res.status(413).json({ error: `The request is larger than ${Math.round(ctx.config.webhookMaxBodyBytes / 1024)} KB` });
++      }
++      const text = boundary ? '' : raw.toString('utf8');
++      if (boundary) {
++        // Form data with files (e.g. a website chat box with photos): text fields become the body,
++        // and each JPG / PNG / WEBP / PDF is kept for a few days and listed in body.files.
++        let form;
++        try {
++          form = parseMultipart(raw, boundary);
++        } catch (err) {
++          return res.status(400).json({ error: `The form data could not be read: ${(err as Error).message}` });
++        }
++        const files: Record<string, unknown>[] = [];
++        const skipped: string[] = [];
++        for (const f of form.files.slice(0, 10)) {
++          const type = sniffFileType(f.data);
++          if (!f.data.length) continue;
++          if (!type || !FILE_TYPES.includes(type)) {
++            skipped.push(`${f.filename} (only JPG, PNG, WEBP and PDF files are kept)`);
++            continue;
++          }
++          const ref = await ctx.files.save({ workflowId: wf.workflowId, executionId: null }, f.data, { name: f.filename, mimeType: type });
++          files.push({ field: f.field, ...ref });
++        }
++        body = { ...form.fields, files, ...(skipped.length ? { skippedFiles: skipped } : {}) };
++      }
+       if (text) {
+         const type = req.header('content-type') ?? '';
+         if (type.includes('json')) {
+diff --git a/apps/api/src/services/ai-client.ts b/apps/api/src/services/ai-client.ts
+index aa7e9e4..71898c2 100644
+--- a/apps/api/src/services/ai-client.ts
++++ b/apps/api/src/services/ai-client.ts
+@@ -1,5 +1,5 @@
+ import type { AiService } from '@widebed/shared';
+-import { NodeError, type AiRequest, type AiResponse } from '@widebed/nodes';
++import { NodeError, type AiImageRequest, type AiImageResponse, type AiRequest, type AiResponse } from '@widebed/nodes';
+ 
+ /**
+  * One small client for the three AI services. Each speaks a different HTTP API;
+@@ -136,6 +136,51 @@ export async function aiComplete(
+ }
+ 
+ 
++/* ================================================================ pictures */
++
++/** Gemini model that makes pictures, used when the AI connection's own model cannot. */
++export const DEFAULT_IMAGE_MODEL = 'gemini-2.5-flash-image';
++const IMAGE_TIMEOUT_MS = 100_000;
++
++/**
++ * Makes one picture with Gemini (optionally starting from photos). Only Gemini connections can do this.
++ * The connection's model is used when it is an image model, otherwise gemini-2.5-flash-image.
++ */
++export async function aiGenerateImage(cfg: AiConfig, req: AiImageRequest, fetchJson: AiFetch = defaultAiFetch, signal?: AbortSignal): Promise<AiImageResponse> {
++  if (cfg.service !== 'gemini') {
++    throw new NodeError('AI Picture needs a Google Gemini AI connection. Add one on the Credentials page (AI service → Google Gemini) and choose it on this step.', { code: 'AI_IMAGE_SERVICE' });
++  }
++  const model = /image/i.test(cfg.model) ? cfg.model : DEFAULT_IMAGE_MODEL;
++  const timeout = AbortSignal.timeout(IMAGE_TIMEOUT_MS);
++  const sig = signal ? AbortSignal.any([signal, timeout]) : timeout;
++  let res: { status: number; json: any };
++  try {
++    res = await fetchJson(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`, {
++      method: 'POST',
++      headers: { 'x-goog-api-key': cfg.apiKey, 'content-type': 'application/json' },
++      body: JSON.stringify({
++        contents: [userTurn('gemini', req.prompt, req.images)],
++        generationConfig: { responseModalities: ['TEXT', 'IMAGE'] },
++      }),
++      signal: sig,
++    });
++  } catch (err) {
++    if (signal?.aborted) throw err;
++    if (timeout.aborted) throw new NodeError('Making the picture took too long (100 s). Try again.', { code: 'AI_TIMEOUT', retryable: true });
++    throw new NodeError(`Could not reach the AI service: ${(err as Error).message}`, { code: 'AI_NETWORK', retryable: true });
++  }
++  if (res.status >= 400) throw friendlyError('gemini', model, res.status, res.json, !!req.images?.length);
++  const cand = res.json?.candidates?.[0];
++  const parts: any[] = cand?.content?.parts ?? [];
++  const pic = parts.map((p) => p?.inlineData ?? p?.inline_data).find((d) => d && typeof d.data === 'string' && /^image\//.test(d.mimeType ?? d.mime_type ?? ''));
++  const text = parts.filter((p) => typeof p?.text === 'string' && !p.thought).map((p) => p.text).join('').trim();
++  if (!pic) {
++    const why = cand?.finishReason && cand.finishReason !== 'STOP' ? ` (${cand.finishReason})` : res.json?.promptFeedback?.blockReason ? ` (${res.json.promptFeedback.blockReason})` : '';
++    throw new NodeError(`The AI did not make a picture${why}.${text ? ` It said: “${text.slice(0, 300)}”` : ''}`, { code: 'AI_NO_IMAGE', retryable: !why });
++  }
++  return { data: pic.data, mimeType: String(pic.mimeType ?? pic.mime_type), text, model: String(res.json?.modelVersion ?? model) };
++}
++
+ /* ================================================================ streaming */
+ 
+ /** Like AiFetch, but on success gives the response body line by line (server-sent events). */
+diff --git a/apps/api/src/services/credential-service.ts b/apps/api/src/services/credential-service.ts
+index ab158fd..513af88 100644
+--- a/apps/api/src/services/credential-service.ts
++++ b/apps/api/src/services/credential-service.ts
+@@ -3,8 +3,8 @@ import { cert, getApp, initializeApp } from 'firebase-admin/app';
+ import { getFirestore, Timestamp, DocumentReference, GeoPoint, type Firestore } from 'firebase-admin/firestore';
+ import type { AiService, AppUser, Credential } from '@widebed/shared';
+ import { AI_SERVICE_INFO, collectionAllowed, hasPermission, maskUsername, validHeaderName } from '@widebed/shared';
+-import type { AiRequest, AiResponse, ApiKeyAccess, FirestoreAccess, FirestoreDoc } from '@widebed/nodes';
+-import { aiComplete, aiStream, defaultAiFetch, defaultAiStreamFetch, listAiModels, type AiFetch, type AiStreamFetch } from './ai-client.js';
++import type { AiImageRequest, AiImageResponse, AiRequest, AiResponse, ApiKeyAccess, FirestoreAccess, FirestoreDoc } from '@widebed/nodes';
++import { aiComplete, aiGenerateImage, aiStream, defaultAiFetch, defaultAiStreamFetch, listAiModels, type AiFetch, type AiStreamFetch } from './ai-client.js';
+ import { NodeError, buildMime } from '@widebed/nodes';
+ import type { Repositories } from '../repositories/types.js';
+ import { SecretBox, hashToken, randomToken } from '../lib/crypto.js';
+@@ -14,7 +14,7 @@ import { badRequest, forbidden, notFound } from '../lib/http-error.js';
+ /** Collections of the automation platform itself — never reachable from Firebase nodes. */
+ const PLATFORM_COLLECTIONS = new Set([
+   'users', 'workflows', 'workflowVersions', 'workflowExecutions', 'workflowFolders', 'workflowTemplates', 'webhookEndpoints',
+-  'credentials', 'credentialSecrets', 'auditLogs', 'systemSettings', 'workflowChatMemory',
++  'credentials', 'credentialSecrets', 'auditLogs', 'systemSettings', 'workflowChatMemory', 'workflowFiles',
+   'assistantChats', 'assistantMemories', 'aiAgents', 'aiTasks', 'aiSchedules', 'aiResponsibilities', 'aiNotifications',
+   'aiApprovals', 'aiProjects', 'aiKnowledge', 'aiUsage',
+ ]);
+@@ -196,6 +196,15 @@ export class CredentialService {
+     return res;
+   }
+ 
++  /** Makes a picture with a Gemini AI connection (AI Picture step). */
++  async aiImage(id: string, department: string | null, req: AiImageRequest): Promise<AiImageResponse> {
++    const c = await this.loadForRun(id, 'ai_provider', department);
++    const { apiKey } = await this.readSecret(id);
++    const { signal, ...rest } = req;
++    const service = c.details.aiService ?? 'openai';
++    return aiGenerateImage({ service, model: c.details.model || AI_SERVICE_INFO[service].defaultModel, apiKey }, rest, this.aiFetch, signal);
++  }
++
+   /** Models the key of this AI connection can use (asked from the AI service). */
+   async aiModels(id: string) {
+     const c = await this.o.repos.credentials.get(id);
+diff --git a/apps/api/src/services/execution-service.ts b/apps/api/src/services/execution-service.ts
+index 343cc6a..9bad8cb 100644
+--- a/apps/api/src/services/execution-service.ts
++++ b/apps/api/src/services/execution-service.ts
+@@ -1,3 +1,4 @@
++import type { FileService } from './file-service.js';
+ import type {
+   ExecutionEvent,
+   ExecutionStatus,
+@@ -42,6 +43,8 @@ export interface ExecutionServiceDeps {
+   runCode: NodeServices['runCode'];
+   timeoutMs: number;
+   waitMaxMs: number;
++  /** Webhook uploads and AI pictures. */
++  files?: FileService | null;
+   /** Max size of trigger data + draft definition stored on the execution document. */
+   maxPayloadBytes?: number;
+ }
+@@ -314,6 +317,8 @@ export class ExecutionService {
+       firestore: credentials ? (id) => credentials.firestoreAccess(id, dept) : undefined,
+       googleToken: credentials ? (id) => credentials.googleToken(id, dept) : undefined,
+       ai: credentials ? (id, req) => credentials.ai(id, dept, req) : undefined,
++      aiImage: credentials ? (id, req) => credentials.aiImage(id, dept, req) : undefined,
++      files: this.deps.files ? this.deps.files.accessFor(exec.workflowId, exec.executionId) : undefined,
+       apiKey: credentials ? (id) => credentials.apiKey(id, dept) : undefined,
+       chatMemory: chatMemoryFor(this.deps.repos, exec.workflowId),
+       // Team steps: only ones shared with everyone or with this workflow's team.
+diff --git a/apps/api/src/services/file-service.ts b/apps/api/src/services/file-service.ts
+new file mode 100644
+index 0000000..2d777b9
+--- /dev/null
++++ b/apps/api/src/services/file-service.ts
+@@ -0,0 +1,62 @@
++import type { FileRef, FileStoreAccess } from '@widebed/nodes';
++import type { Repositories, StoredFile } from '../repositories/types.js';
++import { randomToken } from '../lib/crypto.js';
++
++/**
++ * Files kept for a few days for workflows: photos a website chat box sends to a webhook,
++ * and pictures made by the AI Picture step.
++ *
++ * Each file has an unguessable id (192 random bits), which is also its public link
++ * (/api/files/<id>), so a chat box can show a picture without signing in.
++ * A workflow can only read its own files.
++ */
++
++export const FILE_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'application/pdf'];
++export const MAX_FILE_BYTES = 8 * 1024 * 1024;
++
++export class FileService {
++  constructor(
++    private readonly repos: Repositories,
++    private readonly opts: { publicBaseUrl: string; retentionDays: number },
++  ) {}
++
++  url(fileId: string) {
++    return `${this.opts.publicBaseUrl.replace(/\/$/, '')}/api/files/${fileId}`;
++  }
++
++  async save(owner: { workflowId: string; executionId: string | null }, data: Uint8Array, meta: { name: string; mimeType: string }): Promise<FileRef> {
++    if (!FILE_TYPES.includes(meta.mimeType)) throw new Error(`Files of type ${meta.mimeType} are not kept`);
++    if (data.byteLength > MAX_FILE_BYTES) throw new Error('The file is larger than 8 MB');
++    const now = Date.now();
++    const stored: StoredFile = {
++      fileId: `file_${randomToken(24)}`,
++      workflowId: owner.workflowId,
++      executionId: owner.executionId,
++      name: meta.name.replace(/[^\w.\- ()]/g, '_').slice(0, 120) || 'file',
++      mimeType: meta.mimeType,
++      size: data.byteLength,
++      createdAt: new Date(now).toISOString(),
++      expiresAt: new Date(now + this.opts.retentionDays * 86400_000).toISOString(),
++    };
++    await this.repos.files.save(stored, Buffer.from(data));
++    return { fileId: stored.fileId, name: stored.name, mimeType: stored.mimeType, size: stored.size, url: this.url(stored.fileId) };
++  }
++
++  /** For the public link: any file, by its secret id. */
++  async read(fileId: string) {
++    if (!/^file_[A-Za-z0-9_-]{20,60}$/.test(fileId)) return null;
++    return this.repos.files.get(fileId);
++  }
++
++  /** What one run of a workflow may do with files. */
++  accessFor(workflowId: string, executionId: string): FileStoreAccess {
++    return {
++      save: (data, meta) => this.save({ workflowId, executionId }, data, meta),
++      load: async (fileId) => {
++        const f = await this.read(fileId);
++        if (!f || f.meta.workflowId !== workflowId) return null;
++        return { data: f.data, name: f.meta.name, mimeType: f.meta.mimeType };
++      },
++    };
++  }
++}
+diff --git a/apps/api/test/pictures.test.ts b/apps/api/test/pictures.test.ts
+new file mode 100644
+index 0000000..70c62e7
+--- /dev/null
++++ b/apps/api/test/pictures.test.ts
+@@ -0,0 +1,227 @@
++import crypto from 'node:crypto';
++import request from 'supertest';
++import { beforeAll, describe, expect, it } from 'vitest';
++import { pictureIds } from '@widebed/nodes';
++import { loadConfig } from '../src/config.js';
++import { buildContext, startProcessing } from '../src/bootstrap.js';
++import { createApp } from '../src/create-app.js';
++import { createMemoryRepositories } from '../src/repositories/memory.js';
++import { multipartBoundary, parseMultipart, sniffFileType } from '../src/lib/multipart.js';
++import type { TokenVerifier } from '../src/auth/verifier.js';
++
++/**
++ * Photos from a website chat box (multipart webhook calls), the AI Chatbot looking at them,
++ * and the AI Picture step (Gemini) making a room preview that the chat box shows by link.
++ */
++
++const PNG = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), crypto.randomBytes(3000)]);
++const JPEG = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]), crypto.randomBytes(2000), Buffer.from([0x0d, 0x0a, 0x2d, 0x2d])]); // contains "\r\n--"
++const MADE = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.from('the preview picture')]);
++
++const geminiCalls: any[] = [];
++let imageAnswer: (body: any) => any = () => ({ candidates: [{ content: { parts: [{ text: 'Here is your room.' }, { inlineData: { mimeType: 'image/png', data: MADE.toString('base64') } }] }, finishReason: 'STOP' }] });
++
++const verifier: TokenVerifier = { verify: async (t) => ({ uid: t.replace('tok-', ''), email: `${t.replace('tok-', '')}@x.com`, name: t, emailVerified: true }) };
++const as = { Authorization: 'Bearer tok-boss' };
++const repos = createMemoryRepositories();
++const ctx = buildContext(
++  loadConfig({ NODE_ENV: 'test', FIREBASE_PROJECT_ID: 't', ENCRYPTION_KEY: crypto.randomBytes(32).toString('base64'), RATE_LIMIT_PER_MINUTE: '100000', WEBHOOK_RATE_LIMIT_PER_MINUTE: '100000', ASSISTANT_BROWSER: 'false', PUBLIC_BASE_URL: 'https://automation.test', WEBHOOK_MAX_BODY_BYTES: '20000', WEBHOOK_MAX_UPLOAD_BYTES: '200000' } as any),
++  repos,
++  verifier,
++  {
++    credentialOverrides: {
++      aiFetch: async (url, init) => {
++        const body = JSON.parse(init.body ?? '{}');
++        const words = (body.contents?.[0]?.parts ?? []).map((p: any) => p.text ?? '').join('');
++        if (/Reply with the word OK/.test(words) || /OK\.?$/.test(words)) return { status: 200, json: { candidates: [{ content: { parts: [{ text: 'OK' }] } }] } };
++        geminiCalls.push({ url, body });
++        if (body.generationConfig?.responseModalities) return { status: 200, json: imageAnswer(body) };
++        return { status: 200, json: { candidates: [{ content: { parts: [{ text: 'I can see a bright living room.' }] } }] } };
++      },
++    },
++  },
++);
++startProcessing(ctx);
++const app = createApp(ctx);
++let gemini = '';
++let openai = '';
++
++/** Builds, publishes and activates a workflow: Webhook → (steps) → Respond to Webhook. Returns the webhook path. */
++async function publish(steps: any[], respond: Record<string, string>) {
++  const id = (await request(app).post('/api/workflows').set(as).send({ name: `Pictures ${Math.random()}` })).body.workflowId;
++  const nodes: any[] = [{ id: 'hook', type: 'trigger.webhook', name: 'Chat message', position: { x: 0, y: 0 }, config: { method: 'POST', responseMode: 'reply', allowedOrigins: '*' } }, ...steps];
++  nodes.push({ id: 'r', type: 'comm.respondWebhook', name: 'Reply', position: { x: 900, y: 0 }, config: { bodyType: 'fields', bodyFields: Object.entries(respond).map(([key, value]) => ({ key, value })), statusCode: 200 } });
++  const chain = nodes.map((n) => n.id);
++  const connections = chain.slice(1).map((t, i) => ({ id: `c${i}`, source: chain[i], sourceHandle: 'main', target: t, targetHandle: 'main' }));
++  const save = await request(app).put(`/api/workflows/${id}/draft`).set(as).send({ definition: { schemaVersion: 1, nodes, connections, settings: {} } });
++  expect(save.status).toBe(200);
++  const pub = await request(app).post(`/api/workflows/${id}/publish`).set(as);
++  expect(pub.status, JSON.stringify(pub.body)).toBe(200);
++  await request(app).post(`/api/workflows/${id}/activate`).set(as);
++  return '/api/hooks/' + String(pub.body.issuedWebhooks[0].url).split('/hooks/')[1];
++}
++
++const chatForm = (req: request.Test) =>
++  req.set('origin', 'https://www.widebed.com').field('sessionId', 's_1').field('message', 'Show me a preview').field('history', '[]').attach('file0', PNG, { filename: 'room.png', contentType: 'image/png' });
++
++beforeAll(async () => {
++  await repos.users.create({ uid: 'boss', name: 'boss', email: 'boss@x.com', role: 'super_admin', department: null, status: 'active', createdAt: new Date().toISOString(), lastLoginAt: null });
++  const g = await request(app).post('/api/credentials/ai').set(as).send({ name: 'Gemini', service: 'gemini', apiKey: 'AIza-test-key-1234' });
++  expect(g.status, JSON.stringify(g.body)).toBe(201);
++  gemini = g.body.credentialId;
++  const o = await request(app).post('/api/credentials/ai').set(as).send({ name: 'OpenAI', service: 'openai', apiKey: 'sk-test-key-123456' }).catch(() => null);
++  openai = o?.body?.credentialId ?? '';
++});
++
++describe('Reading form data with files', () => {
++  it('splits fields and files, keeping file bytes exactly (even ones that contain "\\r\\n--")', () => {
++    const b = 'XyZ123';
++    const raw = Buffer.concat([
++      Buffer.from(`--${b}\r\nContent-Disposition: form-data; name="message"\r\n\r\nHi there\r\n`),
++      Buffer.from(`--${b}\r\nContent-Disposition: form-data; name="file0"; filename="a/b.jpg"\r\nContent-Type: image/jpeg\r\n\r\n`),
++      JPEG,
++      Buffer.from(`\r\n--${b}--\r\n`),
++    ]);
++    expect(multipartBoundary(`multipart/form-data; boundary=${b}`)).toBe(b);
++    expect(multipartBoundary('application/json')).toBeNull();
++    const form = parseMultipart(raw, b);
++    expect(form.fields).toEqual({ message: 'Hi there' });
++    expect(form.files).toHaveLength(1);
++    expect(form.files[0]!.filename).toBe('a_b.jpg');
++    expect(form.files[0]!.data.equals(JPEG)).toBe(true);
++    expect(sniffFileType(JPEG)).toBe('image/jpeg');
++    expect(sniffFileType(PNG)).toBe('image/png');
++    expect(sniffFileType(Buffer.from('<html><script>'))).toBeNull();
++    expect(() => parseMultipart(Buffer.from(`--${b}\r\nContent-Disposition: form-data; name="x"\r\n\r\nno end`), b)).toThrow(/cut off/);
++  });
++
++  it('finds file ids in a list of files, one file, JSON text or a comma list', () => {
++    const id = 'file_' + 'a'.repeat(32);
++    expect(pictureIds([{ fileId: id, url: 'x' }])).toEqual([id]);
++    expect(pictureIds({ fileId: id })).toEqual([id]);
++    expect(pictureIds(JSON.stringify([{ fileId: id }]))).toEqual([id]);
++    expect(pictureIds(`${id}, not-a-file`)).toEqual([id]);
++    expect(pictureIds('')).toEqual([]);
++  });
++});
++
++describe('Webhook calls with photos (website chat box)', () => {
++  let hook = '';
++  beforeAll(async () => {
++    hook = await publish([], { message: '{{ $json.body.message }}', files: '{{ $json.body.files }}', skipped: '{{ $json.body.skippedFiles }}' });
++  });
++
++  it('keeps the photo, lists it in body.files and shows it by its link', async () => {
++    const res = await chatForm(request(app).post(hook)).attach('file1', Buffer.from('<html><script>alert(1)</script>'), { filename: 'evil.png', contentType: 'image/png' });
++    expect(res.status, JSON.stringify(res.body)).toBe(200);
++    expect(res.body.message).toBe('Show me a preview');
++    expect(res.body.files).toHaveLength(1);
++    const f = res.body.files[0];
++    expect(f).toMatchObject({ field: 'file0', name: 'room.png', mimeType: 'image/png', size: PNG.length });
++    expect(f.url).toMatch(/^https:\/\/automation\.test\/api\/files\/file_[A-Za-z0-9_-]{32}$/);
++    expect(res.body.skipped[0]).toContain('evil.png');
++
++    const got = await request(app).get(new URL(f.url).pathname).buffer(true).parse((r, cb) => { const c: Buffer[] = []; r.on('data', (d: Buffer) => c.push(d)); r.on('end', () => cb(null, Buffer.concat(c))); });
++    expect(got.status).toBe(200);
++    expect(got.headers['content-type']).toBe('image/png');
++    expect(got.headers['x-content-type-options']).toBe('nosniff');
++    expect(got.headers['access-control-allow-origin']).toBe('*');
++    expect(Buffer.compare(got.body, PNG)).toBe(0);
++    // The run itself does not carry the photo bytes (the execution record stays small).
++    const runs = await repos.executions.list({}, 100);
++    expect(JSON.stringify(runs.items.map((e) => (e as any).triggerItems))).not.toContain(PNG.toString('base64').slice(0, 40));
++  });
++
++  it('unknown or malformed file links are 404', async () => {
++    expect((await request(app).get('/api/files/file_doesnotexist0000000000000000')).status).toBe(404);
++    expect((await request(app).get('/api/files/..%2Fetc')).status).toBe(404);
++  });
++
++  it('allows bigger calls with files, but keeps the normal limit for JSON', async () => {
++    const big = Buffer.concat([PNG, crypto.randomBytes(60_000)]);
++    const ok = await request(app).post(hook).field('message', 'big photo').attach('file0', big, { filename: 'big.png', contentType: 'image/png' });
++    expect(ok.status).toBe(200);
++    expect(ok.body.files[0].size).toBe(big.length);
++    const json = await request(app).post(hook).set('content-type', 'application/json').send({ message: 'x'.repeat(30_000) });
++    expect(json.status).toBe(413);
++    const tooBig = await request(app).post(hook).field('message', 'huge').attach('file0', Buffer.concat([PNG, crypto.randomBytes(250_000)]), { filename: 'huge.png', contentType: 'image/png' });
++    expect(tooBig.status).toBe(413);
++  });
++});
++
++describe('AI steps with pictures', () => {
++  it('the AI Chatbot looks at the photos sent with the message', async () => {
++    const hook = await publish(
++      [{ id: 'bot', type: 'ai.chatbot', name: 'Answer', position: { x: 300, y: 0 }, credentialId: gemini, config: { message: '{{ $json.body.message }}', instructions: 'You are the Widebed assistant.', pictures: '{{ $json.body.files }}', conversationId: '', memoryMessages: 0, lookups: [], maxLookups: 0, saveAs: 'output' } }],
++      { reply: '{{ $json.output }}', seen: '{{ $json.picturesSeen }}' },
++    );
++    geminiCalls.length = 0;
++    const res = await chatForm(request(app).post(hook));
++    expect(res.status, JSON.stringify(res.body)).toBe(200);
++    expect(res.body).toEqual({ reply: 'I can see a bright living room.', seen: 1 });
++    const parts = geminiCalls[0].body.contents[0].parts;
++    expect(parts[0].inline_data).toEqual({ mime_type: 'image/png', data: PNG.toString('base64') });
++    expect(parts.at(-1).text).toContain('Show me a preview');
++  });
++
++  it('AI Picture makes the preview with Gemini and the chat box gets its link', async () => {
++    const hook = await publish(
++      [{ id: 'pic', type: 'ai.image', name: 'Room preview', position: { x: 300, y: 0 }, credentialId: gemini, config: { prompt: 'Keep the room. Add a grey sofa.', pictures: '{{ $json.body.files }}', saveAs: 'image' } }],
++      { reply: 'Here is a preview', image: '{{ $json.image }}' },
++    );
++    geminiCalls.length = 0;
++    const res = await chatForm(request(app).post(hook));
++    expect(res.status, JSON.stringify(res.body)).toBe(200);
++    expect(res.body.image).toMatchObject({ mimeType: 'image/png', size: MADE.length, note: 'Here is your room.' });
++    expect(res.body.image.url).toMatch(/\/api\/files\/file_/);
++    expect(res.body.image.data).toBeUndefined(); // a link, not megabytes of base64
++    const call = geminiCalls[0];
++    expect(call.url).toContain('/models/gemini-2.5-flash-image:generateContent');
++    expect(call.body.generationConfig.responseModalities).toEqual(['TEXT', 'IMAGE']);
++    expect(call.body.contents[0].parts[0].inline_data.mime_type).toBe('image/png');
++    expect(call.body.contents[0].parts.at(-1).text).toBe('Keep the room. Add a grey sofa.');
++    const got = await request(app).get(new URL(res.body.image.url).pathname);
++    expect(got.status).toBe(200);
++    expect(got.headers['content-type']).toBe('image/png');
++  });
++
++  it('says clearly when Gemini makes no picture, and that other AI services cannot', async () => {
++    imageAnswer = () => ({ candidates: [{ content: { parts: [{ text: 'I cannot help with that.' }] }, finishReason: 'IMAGE_SAFETY' }] });
++    const hook = await publish(
++      [{ id: 'pic', type: 'ai.image', name: 'Room preview', position: { x: 300, y: 0 }, credentialId: gemini, config: { prompt: 'Add a sofa', pictures: '', saveAs: 'image' } }],
++      { image: '{{ $json.image }}' },
++    );
++    const res = await request(app).post(hook).set('content-type', 'application/json').send({ message: 'x' });
++    expect(res.status).toBe(500);
++    const runs = (await repos.executions.list({}, 200)).items.filter((e) => e.status === 'failed');
++    const steps = await repos.executions.listSteps(runs[0]!.executionId);
++    expect(JSON.stringify(steps)).toMatch(/did not make a picture \(IMAGE_SAFETY\)/);
++
++    if (openai) {
++      const h2 = await publish(
++        [{ id: 'pic', type: 'ai.image', name: 'Room preview', position: { x: 300, y: 0 }, credentialId: openai, config: { prompt: 'Add a sofa', pictures: '', saveAs: 'image' } }],
++        { image: '{{ $json.image }}' },
++      );
++      expect((await request(app).post(h2).set('content-type', 'application/json').send({ message: 'x' })).status).toBe(500);
++    }
++  });
++
++  it('with “Carry on”, the chat still gets its answer when no picture is made', async () => {
++    imageAnswer = () => ({ candidates: [{ content: { parts: [{ text: 'No.' }] }, finishReason: 'IMAGE_SAFETY' }] });
++    const hook = await publish(
++      [{ id: 'pic', type: 'ai.image', name: 'Room preview', position: { x: 300, y: 0 }, credentialId: gemini, config: { prompt: 'Add a sofa', pictures: 'file_' + 'x'.repeat(32), ifFails: 'continue', saveAs: 'image' } }],
++      { reply: 'Text answer', image: '{{ $json.image }}', why: '{{ $json.imageError }}' },
++    );
++    const res = await request(app).post(hook).set('content-type', 'application/json').send({ message: 'x' });
++    expect(res.status).toBe(200);
++    expect(res.body.reply).toBe('Text answer');
++    expect(res.body.image || null).toBeNull(); // an empty value becomes ''
++    expect(res.body.why).toMatch(/could not be used: .*not found or expired/);
++  });
++
++  it('a workflow cannot read another workflow’s photos', async () => {
++    const ref = await ctx.files.save({ workflowId: 'wf_other', executionId: null }, PNG, { name: 'x.png', mimeType: 'image/png' });
++    expect(await ctx.files.accessFor('wf_mine', 'ex_1').load(ref.fileId)).toBeNull();
++    expect((await ctx.files.accessFor('wf_other', 'ex_1').load(ref.fileId))?.mimeType).toBe('image/png');
++  });
++});
+diff --git a/apps/web/src/lib/icons.ts b/apps/web/src/lib/icons.ts
+index c88924c..92e1d2e 100644
+--- a/apps/web/src/lib/icons.ts
++++ b/apps/web/src/lib/icons.ts
+@@ -30,6 +30,7 @@ import {
+   Reply,
+   Package,
+   MessageSquareX,
++  Image,
+ } from '@lucide/vue';
+ import type { Component } from 'vue';
+ 
+@@ -65,6 +66,7 @@ const map: Record<string, Component> = {
+   reply: Reply,
+   package: Package,
+   'message-square-x': MessageSquareX,
++  image: Image,
+ };
+ 
+ export const iconFor = (name: string): Component => map[name] ?? Box;
+diff --git a/firebase/firestore.indexes.json b/firebase/firestore.indexes.json
+index 0ac218b..de06d52 100644
+--- a/firebase/firestore.indexes.json
++++ b/firebase/firestore.indexes.json
+@@ -410,6 +410,23 @@
+       "collectionGroup": "workflowChatMemory",
+       "fieldPath": "turns",
+       "indexes": []
++    },
++    {
++      "collectionGroup": "workflowFiles",
++      "fieldPath": "expireAt",
++      "ttl": true,
++      "indexes": []
++    },
++    {
++      "collectionGroup": "workflowFileParts",
++      "fieldPath": "expireAt",
++      "ttl": true,
++      "indexes": []
++    },
++    {
++      "collectionGroup": "workflowFileParts",
++      "fieldPath": "data",
++      "indexes": []
+     }
+   ]
+ }
+diff --git a/firebase/firestore.rules b/firebase/firestore.rules
+index 22b7333..585b4cd 100644
+--- a/firebase/firestore.rules
++++ b/firebase/firestore.rules
+@@ -44,6 +44,7 @@ service cloud.firestore {
+     match /webhookEndpoints/{id} { allow read, write: if false; }
+     // AI Chatbot conversation memory (per workflow + conversation). TTL on expireAt.
+     match /workflowChatMemory/{id} { allow read, write: if false; }
++    match /workflowFiles/{id=**} { allow read, write: if false; }
+     // Saved team steps ("My team's steps"); only the API reads and writes them.
+     match /customSteps/{id} { allow read, write: if false; }
+     match /credentials/{id} { allow read, write: if false; }
+diff --git a/packages/nodes/src/index.ts b/packages/nodes/src/index.ts
+index 4c6d7aa..9cac361 100644
+--- a/packages/nodes/src/index.ts
++++ b/packages/nodes/src/index.ts
+@@ -16,4 +16,5 @@ export * from './nodes/unsupported.js';
+ export * from './nodes/sheets.js';
+ export * from './nodes/ai.js';
+ export * from './nodes/chatbot.js';
++export { aiPicture, loadPictures, pictureIds, PICTURE_TYPES } from './nodes/pictures.js';
+ export * from './nodes/custom-step.js';
+diff --git a/packages/nodes/src/nodes/chatbot.ts b/packages/nodes/src/nodes/chatbot.ts
+index 6f30f00..0f94439 100644
+--- a/packages/nodes/src/nodes/chatbot.ts
++++ b/packages/nodes/src/nodes/chatbot.ts
+@@ -3,6 +3,7 @@ import type { Item } from '@widebed/shared';
+ import { defineNode, NodeError, requireService, type ChatTurn, type NodeExecutionContext } from '../types.js';
+ import { parseAiJson } from './ai.js';
+ import { readSheetRows } from './sheets.js';
++import { loadPictures } from './pictures.js';
+ 
+ /**
+  * AI Chatbot — answers a message (WhatsApp, live chat, email…) like a staff member would.
+@@ -119,6 +120,15 @@ export const aiChatbot = defineNode({
+         placeholder: '{{ $json.body.contact_id }}',
+         help: 'Something that is the same for every message of one person, e.g. the contact id or phone number. Leave empty to forget every message.',
+       },
++      {
++        key: 'pictures',
++        label: 'Pictures to look at (optional)',
++        type: 'string',
++        expressions: true,
++        default: '',
++        placeholder: '{{ $json.body.files }}',
++        help: 'Photos sent with this message, e.g. {{ $json.body.files }} from a Webhook upload (a website chat box). The AI sees JPG, PNG and WEBP pictures, up to 4. Needs a model that can see pictures (e.g. gemini-2.5-flash).',
++      },
+       { key: 'memoryMessages', label: 'Messages to remember', type: 'number', default: 20, help: 'How many earlier messages (guest + bot) the AI reads before answering. 0 = none. More costs more AI tokens.' },
+       {
+         key: 'googleConnection',
+@@ -173,6 +183,7 @@ export const aiChatbot = defineNode({
+       message: z.string({ required_error: 'Choose the message to answer' }).min(1, 'Choose the message to answer'),
+       instructions: z.string().default(''),
+       conversationId: z.string().default(''),
++      pictures: z.unknown().optional(),
+       memoryMessages: z.coerce.number().int().min(0, 'Use 0 or more').max(100, 'At most 100 messages').default(20),
+       googleConnection: z.string().default(''),
+       lookups: z
+@@ -218,6 +229,8 @@ export const aiChatbot = defineNode({
+       const system = [asText(c.instructions).trim(), useLookups ? protocol(lookups) : ''].filter(Boolean).join('\n\n') || undefined;
+       const base = [history(past), `New message from the person:\n"""\n${message}\n"""`].filter(Boolean).join('\n\n');
+ 
++      const { images } = await loadPictures(ctx, c.pictures);
++
+       const results: string[] = [];
+       const done: { list: string; find: string; found: number }[] = [];
+       let reply = '';
+@@ -228,7 +241,7 @@ export const aiChatbot = defineNode({
+           results.length ? `Search results so far:\n${results.join('\n\n')}` : '',
+           useLookups && last ? 'You cannot search any more now. Answer with {"reply": "…"}.' : '',
+         ].filter(Boolean).join('\n\n');
+-        const res = await ask(aiId, { system, prompt, json: useLookups, maxTokens: 4000, signal: ctx.signal });
++        const res = await ask(aiId, { system, prompt, json: useLookups, maxTokens: 4000, signal: ctx.signal, ...(images.length ? { images } : {}) });
+         if (!useLookups) {
+           reply = res.text.trim();
+           break;
+@@ -277,7 +290,7 @@ export const aiChatbot = defineNode({
+         const keep = Math.max(2, c.memoryMessages);
+         await memory.save(convo, [...past, { role: 'user' as const, text: clip(message, MAX_TURN), at: now }, { role: 'assistant' as const, text: clip(reply, MAX_TURN), at: now }].slice(-keep));
+       }
+-      out.push({ json: { ...item.json, [c.saveAs]: reply, lookups: done } });
++      out.push({ json: { ...item.json, [c.saveAs]: reply, lookups: done, ...(images.length ? { picturesSeen: images.length } : {}) } });
+     }
+     return { outputs: { main: out } };
+   },
+diff --git a/packages/nodes/src/nodes/pictures.ts b/packages/nodes/src/nodes/pictures.ts
+new file mode 100644
+index 0000000..8fc91c9
+--- /dev/null
++++ b/packages/nodes/src/nodes/pictures.ts
+@@ -0,0 +1,172 @@
++import { z } from 'zod';
++import type { Item } from '@widebed/shared';
++import { defineNode, NodeError, requireService, type AiImage, type NodeExecutionContext } from '../types.js';
++
++/**
++ * Pictures for AI steps.
++ *
++ *  - A Webhook that receives a file upload (multipart/form-data, e.g. a website chat box) keeps each
++ *    file for a few days and lists it in `{{ $json.body.files }}` as { fileId, name, mimeType, size, url }.
++ *  - The AI Chatbot can look at those pictures ("Pictures to look at").
++ *  - The AI Picture step makes a new picture (Gemini), e.g. the customer's room with our furniture in it,
++ *    keeps it like an upload and gives its link.
++ */
++
++export const PICTURE_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
++export const MAX_PICTURES = 4;
++const MAX_PICTURE_BYTES = 5 * 1024 * 1024;
++
++type Ctx = NodeExecutionContext<any>;
++
++/** File ids from whatever the field resolved to: a list of files, one file, an id, or a comma list of ids. */
++export function pictureIds(value: unknown): string[] {
++  const out: string[] = [];
++  const add = (v: unknown) => {
++    if (v === null || v === undefined || v === '') return;
++    if (Array.isArray(v)) return v.forEach(add);
++    if (typeof v === 'object') {
++      const id = (v as Record<string, unknown>).fileId;
++      if (typeof id === 'string') out.push(id.trim());
++      return;
++    }
++    const s = String(v).trim();
++    if (s.startsWith('[') || s.startsWith('{')) {
++      try {
++        return add(JSON.parse(s));
++      } catch {
++        /* not JSON: treat as ids */
++      }
++    }
++    s.split(/[\s,]+/).filter(Boolean).forEach((x) => out.push(x));
++  };
++  add(value);
++  return [...new Set(out.filter((x) => /^file_[A-Za-z0-9_-]{10,100}$/.test(x)))];
++}
++
++/** Loads the pictures (JPG, PNG, WEBP) among the given files, for an AI request. PDFs and other files are skipped. */
++export async function loadPictures(ctx: Ctx, value: unknown): Promise<{ images: AiImage[]; skipped: string[] }> {
++  const ids = pictureIds(value);
++  if (!ids.length) return { images: [], skipped: [] };
++  const files = requireService(ctx.services, 'files', 'File storage');
++  const images: AiImage[] = [];
++  const skipped: string[] = [];
++  for (const id of ids) {
++    if (images.length >= MAX_PICTURES) {
++      skipped.push(`${id} (more than ${MAX_PICTURES} pictures)`);
++      continue;
++    }
++    const f = await files.load(id);
++    if (!f) skipped.push(`${id} (not found or expired)`);
++    else if (!PICTURE_TYPES.includes(f.mimeType)) skipped.push(`${f.name} (${f.mimeType} is not a picture)`);
++    else if (f.data.byteLength > MAX_PICTURE_BYTES) skipped.push(`${f.name} (larger than 5 MB)`);
++    else images.push({ mime: f.mimeType, data: Buffer.from(f.data).toString('base64') });
++  }
++  if (skipped.length) ctx.log(`Pictures skipped: ${skipped.join(', ')}`);
++  return { images, skipped };
++}
++
++const FIELD_NAME = /^[A-Za-z_][A-Za-z0-9_]{0,59}$/;
++const EXT: Record<string, string> = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp' };
++
++/* ---------------------------------------------------------------- AI Picture */
++
++export const aiPicture = defineNode({
++  descriptor: {
++    type: 'ai.image',
++    version: 1,
++    displayName: 'AI Picture',
++    description: 'Make a picture with AI (Gemini), for example the customer’s room photo with your furniture in it.',
++    category: 'ai',
++    icon: 'image',
++    isTrigger: false,
++    inputs: [{ id: 'main' }],
++    outputs: [{ id: 'main' }],
++    credentialProvider: 'ai_provider',
++    fields: [
++      {
++        key: 'prompt',
++        label: 'What should the picture show?',
++        type: 'text',
++        required: true,
++        expressions: true,
++        default: 'Use the room in the photo. Keep its walls, windows, floor and the camera angle. Furnish it with: {{ $json.items }}. Photo-realistic, natural light.',
++        help: 'Describe the picture in plain words. With a photo, say what to keep and what to add.',
++      },
++      {
++        key: 'pictures',
++        label: 'Pictures to start from (optional)',
++        type: 'string',
++        expressions: true,
++        default: '',
++        placeholder: '{{ $json.body.files }}',
++        help: 'Photos the AI should work on, e.g. {{ $json.body.files }} from a Webhook upload. JPG, PNG or WEBP, up to 4.',
++      },
++      {
++        key: 'ifFails',
++        label: 'If no picture can be made',
++        type: 'select',
++        default: 'stop',
++        options: [
++          { label: 'Stop the run with an error', value: 'stop' },
++          { label: 'Carry on without a picture', value: 'continue' },
++        ],
++        help: '“Carry on” keeps the run going (e.g. a chat still gets its text answer): the picture is empty and {{ $json.imageError }} says why.',
++      },
++      { key: 'saveAs', label: 'Save the picture as', type: 'string', default: 'image', help: 'Next steps use {{ $json.image.url }} (the link) and {{ $json.image.mimeType }}.' },
++    ],
++    inputSchema: { description: 'One picture is made per item.' },
++    outputSchema: {
++      description: 'The same item plus the picture: its link, type and file id.',
++      example: [{ json: { image: { url: 'https://automation.widebed.com/api/files/file_abc…', mimeType: 'image/png', fileId: 'file_abc…' } } }],
++    },
++    retryable: false,
++    available: true,
++    docs: [
++      '### AI Picture',
++      'Makes one picture per item with a **Gemini** AI connection (model *gemini-2.5-flash-image*, unless the connection uses another image model).',
++      '',
++      '**Room preview for a website chat box**',
++      '- *Webhook* receives the customer’s photo → **AI Picture**: Pictures `{{ $json.body.files }}`, prompt “Keep the room, add a grey 3-seater sofa and a wooden TV console…”',
++      '- *Respond to Webhook*: field `image` = `{{ $json.image }}` — the chat box shows `image.url`.',
++      '',
++      'The picture is kept for 7 days and its link works without signing in, so only share it with the customer.',
++      'Each picture is a paid AI request (about US$0.04 with Gemini). AI pictures are illustrations: colours and sizes can differ from the real products.',
++    ].join('\n'),
++  },
++  configSchema: z.object({
++    prompt: z.string({ required_error: 'Describe the picture' }).min(1, 'Describe the picture'),
++    pictures: z.unknown().optional(),
++    ifFails: z.enum(['stop', 'continue']).default('stop'),
++    saveAs: z.string().regex(FIELD_NAME, 'Use letters, numbers and _ only (e.g. image)').default('image'),
++  }),
++  async execute(ctx) {
++    if (!ctx.node.credentialId) throw new NodeError('Choose a Gemini AI connection for this node (Credentials → AI service)', { code: 'NO_CREDENTIAL' });
++    const make = requireService(ctx.services, 'aiImage', 'AI pictures');
++    const files = requireService(ctx.services, 'files', 'File storage');
++    const out: Item[] = [];
++    for (let i = 0; i < ctx.items.length; i++) {
++      if (ctx.signal.aborted) throw new NodeError('Execution cancelled', { code: 'CANCELLED' });
++      const item = ctx.items[i]!;
++      const c = ctx.resolve(ctx.config, item, i) as any;
++      try {
++        const prompt = String(c.prompt ?? '').trim().slice(0, 8000);
++        if (!prompt) throw new NodeError('The description of the picture is empty. Check “What should the picture show?”.', { code: 'EMPTY_PROMPT' });
++        const { images, skipped } = await loadPictures(ctx, c.pictures);
++        if (!images.length && skipped.length)
++          throw new NodeError(`The photos to start from could not be used: ${skipped.join(', ')}. Ask the customer to send the photo again.`, { code: 'PICTURES_MISSING' });
++        const res = await make(ctx.node.credentialId, { prompt, images, signal: ctx.signal });
++        const data = Buffer.from(res.data, 'base64');
++        if (!data.length) throw new NodeError('The AI did not send a picture back. Try again, or describe the picture more clearly.', { code: 'AI_NO_IMAGE', retryable: true });
++        const ref = await files.save(data, { name: `ai-picture.${EXT[res.mimeType] ?? 'png'}`, mimeType: res.mimeType });
++        ctx.log(`Made a ${Math.round(data.length / 1024)} KB picture with ${res.model}`);
++        out.push({ json: { ...item.json, [c.saveAs]: { url: ref.url, mimeType: ref.mimeType, fileId: ref.fileId, size: ref.size, note: res.text.slice(0, 500) } } });
++      } catch (err) {
++        if (c.ifFails !== 'continue' || ctx.signal.aborted) throw err;
++        const why = err instanceof Error ? err.message : String(err);
++        ctx.log(`No picture: ${why}`);
++        out.push({ json: { ...item.json, [c.saveAs]: null, [`${c.saveAs}Error`]: why.slice(0, 500) } });
++      }
++    }
++    return { outputs: { main: out } };
++  },
++});
+diff --git a/packages/nodes/src/registry.ts b/packages/nodes/src/registry.ts
+index d6ed163..2b13676 100644
+--- a/packages/nodes/src/registry.ts
++++ b/packages/nodes/src/registry.ts
+@@ -12,6 +12,7 @@ import { gmailRead, gmailSend } from './nodes/gmail.js';
+ import { sheetsCreateRow, sheetsRead, sheetsUpdateRow } from './nodes/sheets.js';
+ import { aiAgent, aiChat, aiClassify, aiExtract } from './nodes/ai.js';
+ import { aiChatbot, aiChatForget } from './nodes/chatbot.js';
++import { aiPicture } from './nodes/pictures.js';
+ import { unsupportedNode } from './nodes/unsupported.js';
+ import { customStepNode } from './nodes/custom-step.js';
+ 
+@@ -69,7 +70,7 @@ export function createDefaultRegistry(): NodeRegistry {
+     // communication
+     gmailSend, gmailRead,
+     sheetsRead, sheetsCreateRow, sheetsUpdateRow,
+-    aiChat, aiChatbot, aiChatForget, aiClassify, aiExtract, aiAgent,
++    aiChat, aiChatbot, aiChatForget, aiPicture, aiClassify, aiExtract, aiAgent,
+     // imports
+     unsupportedNode,
+   ];
+diff --git a/packages/nodes/src/types.ts b/packages/nodes/src/types.ts
+index d28222e..0a8c71a 100644
+--- a/packages/nodes/src/types.ts
++++ b/packages/nodes/src/types.ts
+@@ -53,6 +53,37 @@ export interface AgentRunResult {
+   files: { fileId: string; name: string; size: number }[];
+ }
+ 
++/** A file the platform keeps for a while (e.g. a photo sent to a webhook, or a picture made by AI). */
++export interface FileRef {
++  fileId: string;
++  name: string;
++  mimeType: string;
++  size: number;
++  /** Public link that shows the file (unguessable, expires with the file). */
++  url: string;
++}
++
++/** Files kept by the platform. Nodes save and read them only through this. */
++export interface FileStoreAccess {
++  save(data: Uint8Array, meta: { name: string; mimeType: string }): Promise<FileRef>;
++  load(fileId: string): Promise<{ data: Uint8Array; name: string; mimeType: string } | null>;
++}
++
++/** A request to make a picture with AI (Gemini), optionally from other pictures. */
++export interface AiImageRequest {
++  prompt: string;
++  images?: AiImage[];
++  signal?: AbortSignal;
++}
++export interface AiImageResponse {
++  /** base64, no data: prefix */
++  data: string;
++  mimeType: string;
++  /** Any words the AI wrote next to the picture. */
++  text: string;
++  model: string;
++}
++
+ /** One message of a remembered chatbot conversation. */
+ export interface ChatTurn {
+   role: 'user' | 'assistant';
+@@ -84,6 +115,10 @@ export interface NodeServices {
+   respond?: (res: { status: number; body: unknown; contentType: 'json' | 'text' }) => Promise<void>;
+   /** A step saved by the team ("My team's steps"); null when missing or not shared with this workflow's team. */
+   customStep?: (stepId: string) => Promise<import('@widebed/shared').CustomStep | null>;
++  /** Makes a picture with an AI connection (Gemini only). */
++  aiImage?: (credentialId: string, req: AiImageRequest) => Promise<AiImageResponse>;
++  /** Files of this workflow: webhook uploads and pictures made by AI. */
++  files?: FileStoreAccess;
+   /** Conversation memory for chatbot nodes (scoped to this workflow by the platform). */
+   chatMemory?: ChatMemoryAccess;
+   /** Firestore of an outside project, restricted to the credential's allowed collections. */

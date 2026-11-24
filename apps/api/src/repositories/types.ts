@@ -275,6 +275,26 @@ export interface ChatMemoryRepo {
   delete(id: string): Promise<void>;
 }
 
+/**
+ * Files kept for a few days: photos sent to a webhook, pictures made by the AI Picture step.
+ * workflowFiles/{fileId} holds the details; the bytes are in workflowFiles/{fileId}/workflowFileParts/{n}
+ * (Firestore documents hold at most 1 MB). Deleted by a TTL policy on expireAt.
+ */
+export interface StoredFile {
+  fileId: string;
+  workflowId: string;
+  executionId: string | null;
+  name: string;
+  mimeType: string;
+  size: number;
+  createdAt: string;
+  expiresAt: string;
+}
+export interface FilesRepo {
+  save(meta: StoredFile, data: Buffer): Promise<void>;
+  get(fileId: string): Promise<{ meta: StoredFile; data: Buffer } | null>;
+}
+
 /** Saved team steps ("My team's steps"). Few per company, so list() returns all of them. */
 export interface CustomStepsRepo {
   list(): Promise<CustomStep[]>;
@@ -336,6 +356,7 @@ export interface Repositories {
   usage: UsageRepo;
   settings: SettingsRepo;
   chatMemory: ChatMemoryRepo;
+  files: FilesRepo;
   customSteps: CustomStepsRepo;
   webhooks: WebhooksRepo;
   audit: AuditRepo;
