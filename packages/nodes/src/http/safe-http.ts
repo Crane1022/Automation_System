@@ -31,6 +31,8 @@ export interface SafeHttpRequest {
   body?: string;
   timeoutMs?: number;
   signal?: AbortSignal;
+  /** 'base64' gives the body as base64 (for pictures and other binary files). Default: text. */
+  responseType?: 'text' | 'base64';
 }
 
 export interface SafeHttpResponse {
@@ -130,7 +132,7 @@ export function createSafeHttpClient(opts: SafeHttpOptions): SafeHttpClient {
               status: res.statusCode ?? 0,
               statusText: res.statusMessage ?? '',
               headers,
-              body: Buffer.concat(chunks).toString('utf8'),
+              body: Buffer.concat(chunks).toString(req.responseType === 'base64' ? 'base64' : 'utf8'),
               url: url.toString(),
             });
           });

@@ -150,7 +150,10 @@ export async function aiGenerateImage(cfg: AiConfig, req: AiImageRequest, fetchJ
   if (cfg.service !== 'gemini') {
     throw new NodeError('AI Picture needs a Google Gemini AI connection. Add one on the Credentials page (AI service → Google Gemini) and choose it on this step.', { code: 'AI_IMAGE_SERVICE' });
   }
-  const model = /image/i.test(cfg.model) ? cfg.model : DEFAULT_IMAGE_MODEL;
+  const model = req.model?.trim() || (/image/i.test(cfg.model) ? cfg.model : DEFAULT_IMAGE_MODEL);
+  const imageConfig: Record<string, string> = {};
+  if (req.aspectRatio) imageConfig.aspectRatio = req.aspectRatio;
+  if (req.imageSize && /gemini-3/i.test(model)) imageConfig.imageSize = req.imageSize; // only Gemini 3 image models take a size
   const timeout = AbortSignal.timeout(IMAGE_TIMEOUT_MS);
   const sig = signal ? AbortSignal.any([signal, timeout]) : timeout;
   let res: { status: number; json: any };
@@ -160,7 +163,7 @@ export async function aiGenerateImage(cfg: AiConfig, req: AiImageRequest, fetchJ
       headers: { 'x-goog-api-key': cfg.apiKey, 'content-type': 'application/json' },
       body: JSON.stringify({
         contents: [userTurn('gemini', req.prompt, req.images)],
-        generationConfig: { responseModalities: ['TEXT', 'IMAGE'] },
+        generationConfig: { responseModalities: ['TEXT', 'IMAGE'], ...(Object.keys(imageConfig).length ? { imageConfig } : {}) },
       }),
       signal: sig,
     });

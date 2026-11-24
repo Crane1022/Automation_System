@@ -1,7 +1,8 @@
 import crypto from 'node:crypto';
 import request from 'supertest';
 import { beforeAll, describe, expect, it } from 'vitest';
-import { pictureIds } from '@widebed/nodes';
+import { pictureIds, pictureRefs, pictureSize, closestAspect } from '@widebed/nodes';
+import { aiGenerateImage } from '../src/services/ai-client.js';
 import { loadConfig } from '../src/config.js';
 import { buildContext, startProcessing } from '../src/bootstrap.js';
 import { createApp } from '../src/create-app.js';
@@ -231,5 +232,30 @@ describe('Public links', () => {
   it('use the Vercel production domain when PUBLIC_BASE_URL is not set', () => {
     expect(loadConfig({ ...base, VERCEL_PROJECT_PRODUCTION_URL: 'widebed-automation.vercel.app' }).PUBLIC_BASE_URL).toBe('https://widebed-automation.vercel.app');
     expect(loadConfig({ ...base, PUBLIC_BASE_URL: 'https://automation.widebed.com', VERCEL_PROJECT_PRODUCTION_URL: 'widebed-automation.vercel.app' }).PUBLIC_BASE_URL).toBe('https://automation.widebed.com');
+  });
+});
+
+describe('Reference pictures, shape and model for AI Picture', () => {
+  it('reads links as well as files, and the size of JPG and PNG pictures', () => {
+    expect(pictureRefs('file_' + 'a'.repeat(20) + ', https://lh3.googleusercontent.com/d/abc=w1600, http://x.test/a.png')).toEqual({ ids: ['file_' + 'a'.repeat(20)], urls: ['https://lh3.googleusercontent.com/d/abc=w1600'] });
+    const png = Buffer.alloc(33); Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).copy(png); png.writeUInt32BE(1440, 16); png.writeUInt32BE(1080, 20);
+    expect(pictureSize(png)).toEqual({ width: 1440, height: 1080 });
+    const jpg = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x04, 0x00, 0x00, 0xff, 0xc0, 0x00, 0x11, 0x08, 0x02, 0xd0, 0x05, 0x00, 0x03, 0, 0, 0]);
+    expect(pictureSize(jpg)).toEqual({ width: 1280, height: 720 });
+    expect(closestAspect(1440, 1080)).toBe('4:3');
+    expect(closestAspect(1280, 720)).toBe('16:9');
+    expect(closestAspect(1080, 1440)).toBe('3:4');
+  });
+
+  it('asks Gemini for the chosen model, shape and size', async () => {
+    const bodies: any[] = [];
+    const fake = async (url: string, init: any) => { bodies.push({ url, body: JSON.parse(init.body) }); return { status: 200, json: { candidates: [{ content: { parts: [{ inlineData: { mimeType: 'image/png', data: 'AAAA' } }] } }] } }; };
+    const cfg = { service: 'gemini', model: 'gemini-2.5-flash', apiKey: 'k' } as any;
+    await aiGenerateImage(cfg, { prompt: 'x', aspectRatio: '4:3', imageSize: '2K' }, fake as any);
+    expect(bodies[0].url).toContain('/gemini-2.5-flash-image:');
+    expect(bodies[0].body.generationConfig.imageConfig).toEqual({ aspectRatio: '4:3' });
+    await aiGenerateImage(cfg, { prompt: 'x', model: 'gemini-3-pro-image-preview', aspectRatio: '4:3', imageSize: '2K' }, fake as any);
+    expect(bodies[1].url).toContain('/gemini-3-pro-image-preview:');
+    expect(bodies[1].body.generationConfig.imageConfig).toEqual({ aspectRatio: '4:3', imageSize: '2K' });
   });
 });

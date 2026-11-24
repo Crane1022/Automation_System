@@ -16,5 +16,5 @@ export * from './nodes/unsupported.js';
 export * from './nodes/sheets.js';
 export * from './nodes/ai.js';
 export * from './nodes/chatbot.js';
-export { aiPicture, loadPictures, pictureIds, PICTURE_TYPES } from './nodes/pictures.js';
+export { aiPicture, loadPictures, pictureIds, pictureRefs, pictureSize, closestAspect, ASPECT_RATIOS, PICTURE_TYPES } from './nodes/pictures.js';
 export * from './nodes/custom-step.js';

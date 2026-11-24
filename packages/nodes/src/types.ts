@@ -74,6 +74,12 @@ export interface AiImageRequest {
   prompt: string;
   images?: AiImage[];
   signal?: AbortSignal;
+  /** Gemini image model; empty = the connection's model if it is an image model, else gemini-2.5-flash-image. */
+  model?: string;
+  /** e.g. "4:3". Empty = the model decides. */
+  aspectRatio?: string;
+  /** "1K" | "2K" | "4K" (Gemini 3 image models only). */
+  imageSize?: string;
 }
 export interface AiImageResponse {
   /** base64, no data: prefix */

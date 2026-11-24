@@ -18,15 +18,22 @@ const MAX_PICTURE_BYTES = 5 * 1024 * 1024;
 
 type Ctx = NodeExecutionContext<any>;
 
-/** File ids from whatever the field resolved to: a list of files, one file, an id, or a comma list of ids. */
-export function pictureIds(value: unknown): string[] {
-  const out: string[] = [];
+/** File ids and https links from whatever the field resolved to: a list of files, one file, an id, a link, or a comma list. */
+export function pictureRefs(value: unknown): { ids: string[]; urls: string[] } {
+  const ids: string[] = [];
+  const urls: string[] = [];
+  const one = (x: string) => {
+    x = x.trim();
+    if (/^file_[A-Za-z0-9_-]{10,100}$/.test(x)) ids.push(x);
+    else if (/^https:\/\/[^\s"'<>]{4,2000}$/i.test(x)) urls.push(x);
+  };
   const add = (v: unknown) => {
     if (v === null || v === undefined || v === '') return;
     if (Array.isArray(v)) return v.forEach(add);
     if (typeof v === 'object') {
-      const id = (v as Record<string, unknown>).fileId;
-      if (typeof id === 'string') out.push(id.trim());
+      const o = v as Record<string, unknown>;
+      if (typeof o.fileId === 'string') one(o.fileId);
+      else if (typeof o.url === 'string') one(o.url);
       return;
     }
     const s = String(v).trim();
@@ -34,35 +41,103 @@ export function pictureIds(value: unknown): string[] {
       try {
         return add(JSON.parse(s));
       } catch {
-        /* not JSON: treat as ids */
+        /* not JSON: treat as ids / links */
       }
     }
-    s.split(/[\s,]+/).filter(Boolean).forEach((x) => out.push(x));
+    s.split(/[\s,]+/).filter(Boolean).forEach(one);
   };
   add(value);
-  return [...new Set(out.filter((x) => /^file_[A-Za-z0-9_-]{10,100}$/.test(x)))];
+  return { ids: [...new Set(ids)], urls: [...new Set(urls)] };
 }
 
-/** Loads the pictures (JPG, PNG, WEBP) among the given files, for an AI request. PDFs and other files are skipped. */
-export async function loadPictures(ctx: Ctx, value: unknown): Promise<{ images: AiImage[]; skipped: string[] }> {
-  const ids = pictureIds(value);
-  if (!ids.length) return { images: [], skipped: [] };
-  const files = requireService(ctx.services, 'files', 'File storage');
-  const images: AiImage[] = [];
-  const skipped: string[] = [];
-  for (const id of ids) {
-    if (images.length >= MAX_PICTURES) {
-      skipped.push(`${id} (more than ${MAX_PICTURES} pictures)`);
-      continue;
+/** File ids from whatever the field resolved to. */
+export function pictureIds(value: unknown): string[] {
+  return pictureRefs(value).ids;
+}
+
+/** The real picture type from the first bytes. */
+function sniffPicture(b: Buffer): string | null {
+  if (b.length >= 3 && b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff) return 'image/jpeg';
+  if (b.length >= 8 && b.readUInt32BE(0) === 0x89504e47) return 'image/png';
+  if (b.length >= 12 && b.toString('latin1', 0, 4) === 'RIFF' && b.toString('latin1', 8, 12) === 'WEBP') return 'image/webp';
+  return null;
+}
+
+/** Width and height of a JPG, PNG or WEBP, or null. */
+export function pictureSize(b: Buffer): { width: number; height: number } | null {
+  const type = sniffPicture(b);
+  if (type === 'image/png' && b.length >= 24) return { width: b.readUInt32BE(16), height: b.readUInt32BE(20) };
+  if (type === 'image/webp' && b.length >= 30) {
+    const kind = b.toString('latin1', 12, 16);
+    if (kind === 'VP8X') return { width: 1 + b.readUIntLE(24, 3), height: 1 + b.readUIntLE(27, 3) };
+    if (kind === 'VP8 ') return { width: b.readUInt16LE(26) & 0x3fff, height: b.readUInt16LE(28) & 0x3fff };
+    if (kind === 'VP8L') { const v = b.readUInt32LE(21); return { width: (v & 0x3fff) + 1, height: ((v >> 14) & 0x3fff) + 1 }; }
+  }
+  if (type === 'image/jpeg') {
+    let i = 2;
+    while (i + 9 < b.length) {
+      if (b[i] !== 0xff) { i++; continue; }
+      const marker = b[i + 1]!;
+      if (marker >= 0xc0 && marker <= 0xcf && ![0xc4, 0xc8, 0xcc].includes(marker)) return { height: b.readUInt16BE(i + 5), width: b.readUInt16BE(i + 7) };
+      if (marker === 0xd8 || marker === 0x01 || (marker >= 0xd0 && marker <= 0xd7)) { i += 2; continue; }
+      i += 2 + b.readUInt16BE(i + 2);
     }
-    const f = await files.load(id);
-    if (!f) skipped.push(`${id} (not found or expired)`);
-    else if (!PICTURE_TYPES.includes(f.mimeType)) skipped.push(`${f.name} (${f.mimeType} is not a picture)`);
-    else if (f.data.byteLength > MAX_PICTURE_BYTES) skipped.push(`${f.name} (larger than 5 MB)`);
-    else images.push({ mime: f.mimeType, data: Buffer.from(f.data).toString('base64') });
+  }
+  return null;
+}
+
+/** Shapes Gemini can make. */
+export const ASPECT_RATIOS = ['1:1', '2:3', '3:2', '3:4', '4:3', '4:5', '5:4', '9:16', '16:9', '21:9'];
+/** The supported shape closest to a picture's width / height. */
+export function closestAspect(width: number, height: number): string {
+  const r = width / height;
+  let best = '1:1';
+  let gap = Infinity;
+  for (const a of ASPECT_RATIOS) {
+    const [w, h] = a.split(':').map(Number) as [number, number];
+    const d = Math.abs(Math.log(r / (w / h)));
+    if (d < gap) { gap = d; best = a; }
+  }
+  return best;
+}
+
+/**
+ * Loads the pictures (JPG, PNG, WEBP) among the given files and https links, for an AI request.
+ * Kept files come first, then links (e.g. a product photo from a sheet). PDFs and other files are skipped.
+ */
+export async function loadPictures(ctx: Ctx, value: unknown, max = MAX_PICTURES): Promise<{ images: AiImage[]; skipped: string[]; sizes: ({ width: number; height: number } | null)[] }> {
+  const { ids, urls } = pictureRefs(value);
+  const images: AiImage[] = [];
+  const sizes: ({ width: number; height: number } | null)[] = [];
+  const skipped: string[] = [];
+  const keep = (name: string, data: Buffer, declared: string) => {
+    const mime = sniffPicture(data) ?? declared;
+    if (!PICTURE_TYPES.includes(mime)) return skipped.push(`${name} (not a JPG, PNG or WEBP picture)`);
+    if (data.byteLength > MAX_PICTURE_BYTES) return skipped.push(`${name} (larger than 5 MB)`);
+    images.push({ mime, data: data.toString('base64') });
+    sizes.push(pictureSize(data));
+  };
+  if (ids.length) {
+    const files = requireService(ctx.services, 'files', 'File storage');
+    for (const id of ids) {
+      if (images.length >= max) { skipped.push(`${id} (more than ${max} pictures)`); continue; }
+      const f = await files.load(id);
+      if (!f) skipped.push(`${id} (not found or expired)`);
+      else keep(f.name, Buffer.from(f.data), f.mimeType);
+    }
+  }
+  for (const url of urls) {
+    if (images.length >= max) { skipped.push(`${url} (more than ${max} pictures)`); continue; }
+    try {
+      const res = await ctx.services.http.request({ method: 'GET', url, responseType: 'base64', timeoutMs: 20_000, signal: ctx.signal, headers: { accept: 'image/jpeg,image/png,image/webp,image/*;q=0.8' } });
+      if (res.status >= 400) { skipped.push(`${url} (HTTP ${res.status})`); continue; }
+      keep(url, Buffer.from(res.body, 'base64'), String(res.headers['content-type'] ?? '').split(';')[0]!.trim().toLowerCase());
+    } catch (err) {
+      skipped.push(`${url} (${(err as Error).message})`);
+    }
   }
   if (skipped.length) ctx.log(`Pictures skipped: ${skipped.join(', ')}`);
-  return { images, skipped };
+  return { images, skipped, sizes };
 }
 
 const FIELD_NAME = /^[A-Za-z_][A-Za-z0-9_]{0,59}$/;
@@ -99,7 +174,38 @@ export const aiPicture = defineNode({
         expressions: true,
         default: '',
         placeholder: '{{ $json.body.files }}',
-        help: 'Photos the AI should work on, e.g. {{ $json.body.files }} from a Webhook upload. JPG, PNG or WEBP, up to 4.',
+        help: 'Photos the AI should work on, e.g. {{ $json.body.files }} from a Webhook upload, or https links. JPG, PNG or WEBP.',
+      },
+      {
+        key: 'references',
+        label: 'Style pictures to copy (optional)',
+        type: 'string',
+        expressions: true,
+        default: '',
+        placeholder: '{{ $json.packageImage }}',
+        help: 'Links (https) or files of the look to copy, e.g. the package photo from your sheet. They are sent after the pictures above. Say in the description what to take from them. Up to 4 pictures in all.',
+      },
+      {
+        key: 'model',
+        label: 'Picture model',
+        type: 'string',
+        default: '',
+        placeholder: 'gemini-2.5-flash-image',
+        help: 'Empty = gemini-2.5-flash-image (about US$0.04 a picture). gemini-3-pro-image-preview follows long instructions and reference pictures better and makes sharper pictures, at about US$0.13 a picture.',
+      },
+      {
+        key: 'aspectRatio',
+        label: 'Shape',
+        type: 'select',
+        default: 'auto',
+        options: [{ label: 'Same as the first picture', value: 'auto' }, { label: 'Let the AI choose', value: '' }, ...ASPECT_RATIOS.map((a) => ({ label: a, value: a }))],
+      },
+      {
+        key: 'imageSize',
+        label: 'Size (Gemini 3 models only)',
+        type: 'select',
+        default: '2K',
+        options: [{ label: '1K', value: '1K' }, { label: '2K', value: '2K' }, { label: '4K', value: '4K' }],
       },
       {
         key: 'ifFails',
@@ -136,6 +242,10 @@ export const aiPicture = defineNode({
   configSchema: z.object({
     prompt: z.string({ required_error: 'Describe the picture' }).min(1, 'Describe the picture'),
     pictures: z.unknown().optional(),
+    references: z.unknown().optional(),
+    model: z.string().regex(/^[A-Za-z0-9._-]*$/, 'Use a Gemini model name, e.g. gemini-2.5-flash-image').max(80).default(''),
+    aspectRatio: z.string().refine((v) => v === '' || v === 'auto' || ASPECT_RATIOS.includes(v), 'Choose a shape').default('auto'),
+    imageSize: z.enum(['1K', '2K', '4K']).default('2K'),
     ifFails: z.enum(['stop', 'continue']).default('stop'),
     saveAs: z.string().regex(FIELD_NAME, 'Use letters, numbers and _ only (e.g. image)').default('image'),
   }),
@@ -151,10 +261,14 @@ export const aiPicture = defineNode({
       try {
         const prompt = String(c.prompt ?? '').trim().slice(0, 8000);
         if (!prompt) throw new NodeError('The description of the picture is empty. Check “What should the picture show?”.', { code: 'EMPTY_PROMPT' });
-        const { images, skipped } = await loadPictures(ctx, c.pictures);
-        if (!images.length && skipped.length)
-          throw new NodeError(`The photos to start from could not be used: ${skipped.join(', ')}. Ask the customer to send the photo again.`, { code: 'PICTURES_MISSING' });
-        const res = await make(ctx.node.credentialId, { prompt, images, signal: ctx.signal });
+        const start = await loadPictures(ctx, c.pictures);
+        if (!start.images.length && start.skipped.length)
+          throw new NodeError(`The photos to start from could not be used: ${start.skipped.join(', ')}. Ask the customer to send the photo again.`, { code: 'PICTURES_MISSING' });
+        const refs = await loadPictures(ctx, c.references, MAX_PICTURES - start.images.length);
+        const images = [...start.images, ...refs.images];
+        const first = start.sizes[0] ?? refs.sizes[0];
+        const aspectRatio = c.aspectRatio === 'auto' ? (first ? closestAspect(first.width, first.height) : undefined) : c.aspectRatio || undefined;
+        const res = await make(ctx.node.credentialId, { prompt, images, signal: ctx.signal, model: c.model || undefined, aspectRatio, imageSize: c.imageSize });
         const data = Buffer.from(res.data, 'base64');
         if (!data.length) throw new NodeError('The AI did not send a picture back. Try again, or describe the picture more clearly.', { code: 'AI_NO_IMAGE', retryable: true });
         const ref = await files.save(data, { name: `ai-picture.${EXT[res.mimeType] ?? 'png'}`, mimeType: res.mimeType });
