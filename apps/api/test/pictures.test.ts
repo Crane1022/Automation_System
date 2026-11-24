@@ -225,3 +225,11 @@ describe('AI steps with pictures', () => {
     expect((await ctx.files.accessFor('wf_other', 'ex_1').load(ref.fileId))?.mimeType).toBe('image/png');
   });
 });
+
+describe('Public links', () => {
+  const base = { NODE_ENV: 'test', FIREBASE_PROJECT_ID: 't', ENCRYPTION_KEY: crypto.randomBytes(32).toString('base64') } as any;
+  it('use the Vercel production domain when PUBLIC_BASE_URL is not set', () => {
+    expect(loadConfig({ ...base, VERCEL_PROJECT_PRODUCTION_URL: 'widebed-automation.vercel.app' }).PUBLIC_BASE_URL).toBe('https://widebed-automation.vercel.app');
+    expect(loadConfig({ ...base, PUBLIC_BASE_URL: 'https://automation.widebed.com', VERCEL_PROJECT_PRODUCTION_URL: 'widebed-automation.vercel.app' }).PUBLIC_BASE_URL).toBe('https://automation.widebed.com');
+  });
+});

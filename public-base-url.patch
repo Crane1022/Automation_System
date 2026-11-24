@@ -1,0 +1,33 @@
+diff --git a/apps/api/src/config.ts b/apps/api/src/config.ts
+index 8b2ce76..05933fd 100644
+--- a/apps/api/src/config.ts
++++ b/apps/api/src/config.ts
+@@ -103,6 +103,12 @@ const schema = z.object({
+ export type Config = z.infer<typeof schema>;
+ 
+ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
++  // On Vercel without PUBLIC_BASE_URL, links (webhooks, picture files, Google sign-in) use the production domain.
++  const vercelHost = String(env.VERCEL_PROJECT_PRODUCTION_URL ?? '').trim();
++  if (!env.PUBLIC_BASE_URL && /^[a-z0-9.-]+$/i.test(vercelHost)) env = { ...env, PUBLIC_BASE_URL: `https://${vercelHost}` };
++  else if (env.PUBLIC_BASE_URL && vercelHost && !env.PUBLIC_BASE_URL.includes(vercelHost)) {
++    console.warn(`[config] PUBLIC_BASE_URL is ${env.PUBLIC_BASE_URL} but this Vercel project's domain is ${vercelHost}. Webhook and picture links use PUBLIC_BASE_URL.`);
++  }
+   const parsed = schema.safeParse(env);
+   if (!parsed.success) {
+     const lines = parsed.error.issues.map((i) => `  - ${i.path.join('.')}: ${i.message}`).join('\n');
+diff --git a/apps/api/test/pictures.test.ts b/apps/api/test/pictures.test.ts
+index 70c62e7..ff1e195 100644
+--- a/apps/api/test/pictures.test.ts
++++ b/apps/api/test/pictures.test.ts
+@@ -225,3 +225,11 @@ describe('AI steps with pictures', () => {
+     expect((await ctx.files.accessFor('wf_other', 'ex_1').load(ref.fileId))?.mimeType).toBe('image/png');
+   });
+ });
++
++describe('Public links', () => {
++  const base = { NODE_ENV: 'test', FIREBASE_PROJECT_ID: 't', ENCRYPTION_KEY: crypto.randomBytes(32).toString('base64') } as any;
++  it('use the Vercel production domain when PUBLIC_BASE_URL is not set', () => {
++    expect(loadConfig({ ...base, VERCEL_PROJECT_PRODUCTION_URL: 'widebed-automation.vercel.app' }).PUBLIC_BASE_URL).toBe('https://widebed-automation.vercel.app');
++    expect(loadConfig({ ...base, PUBLIC_BASE_URL: 'https://automation.widebed.com', VERCEL_PROJECT_PRODUCTION_URL: 'widebed-automation.vercel.app' }).PUBLIC_BASE_URL).toBe('https://automation.widebed.com');
++  });
++});

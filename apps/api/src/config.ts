@@ -103,6 +103,12 @@ const schema = z.object({
 export type Config = z.infer<typeof schema>;
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
+  // On Vercel without PUBLIC_BASE_URL, links (webhooks, picture files, Google sign-in) use the production domain.
+  const vercelHost = String(env.VERCEL_PROJECT_PRODUCTION_URL ?? '').trim();
+  if (!env.PUBLIC_BASE_URL && /^[a-z0-9.-]+$/i.test(vercelHost)) env = { ...env, PUBLIC_BASE_URL: `https://${vercelHost}` };
+  else if (env.PUBLIC_BASE_URL && vercelHost && !env.PUBLIC_BASE_URL.includes(vercelHost)) {
+    console.warn(`[config] PUBLIC_BASE_URL is ${env.PUBLIC_BASE_URL} but this Vercel project's domain is ${vercelHost}. Webhook and picture links use PUBLIC_BASE_URL.`);
+  }
   const parsed = schema.safeParse(env);
   if (!parsed.success) {
     const lines = parsed.error.issues.map((i) => `  - ${i.path.join('.')}: ${i.message}`).join('\n');
